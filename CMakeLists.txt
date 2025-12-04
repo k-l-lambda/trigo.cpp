@@ -44,7 +44,7 @@ set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} -O3")
 # Source files (will be added as we implement)
 set(TRIGO_INFERENCE_SOURCES
     src/tgn_tokenizer.cpp
-    # src/shared_model_inferencer.cpp
+    src/shared_model_inferencer.cpp
     # src/prefix_tree_builder.cpp
 )
 
@@ -87,6 +87,30 @@ set_target_properties(test_onnxruntime_cuda PROPERTIES
 # Test executable for TGN tokenizer
 add_executable(test_tgn_tokenizer tests/test_tgn_tokenizer.cpp)
 target_link_libraries(test_tgn_tokenizer PRIVATE trigo_inference)
+
+# Test executable for shared model inferencer
+add_executable(test_shared_model_inferencer tests/test_shared_model_inferencer.cpp)
+target_link_libraries(test_shared_model_inferencer PRIVATE
+    trigo_inference
+    ${ONNXRUNTIME_LIB}
+    CUDA::cudart
+)
+set_target_properties(test_shared_model_inferencer PROPERTIES
+    BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+    INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test executable for cross-language equivalence validation
+add_executable(test_inference_equivalence_cpp tests/test_inference_equivalence_cpp.cpp)
+target_link_libraries(test_inference_equivalence_cpp PRIVATE
+    trigo_inference
+    ${ONNXRUNTIME_LIB}
+    CUDA::cudart
+)
+set_target_properties(test_inference_equivalence_cpp PROPERTIES
+    BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+    INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
 
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
