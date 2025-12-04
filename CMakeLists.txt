@@ -120,6 +120,10 @@ add_executable(test_trigo_coords tests/test_trigo_coords.cpp)
 add_executable(test_trigo_game_utils tests/test_trigo_game_utils.cpp)
 # Header-only test, no library linking needed
 
+# Test executable for game replay (cross-language validation)
+add_executable(test_game_replay tests/test_game_replay.cpp)
+# Header-only test, no library linking needed
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
