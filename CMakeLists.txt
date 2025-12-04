@@ -116,6 +116,10 @@ set_target_properties(test_inference_equivalence_cpp PROPERTIES
 add_executable(test_trigo_coords tests/test_trigo_coords.cpp)
 # Header-only test, no library linking needed
 
+# Test executable for game utils (Go rules)
+add_executable(test_trigo_game_utils tests/test_trigo_game_utils.cpp)
+# Header-only test, no library linking needed
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
