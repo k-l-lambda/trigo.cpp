@@ -112,6 +112,10 @@ set_target_properties(test_inference_equivalence_cpp PROPERTIES
     INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test executable for TGN coordinate system
+add_executable(test_trigo_coords tests/test_trigo_coords.cpp)
+# Header-only test, no library linking needed
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
