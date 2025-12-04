@@ -6,6 +6,8 @@
 
 **Status**: Phase 0 Complete - Architecture designed, feasibility confirmed
 
+**Updated**: December 2025 - Revised to use ONNX Runtime with shared model architecture
+
 ---
 
 ## Executive Summary
@@ -13,50 +15,726 @@
 This document outlines the implementation plan for a high-performance CUDA-accelerated MCTS engine for Trigo (3D Go). The system will generate training data **100-1200× faster** than the TypeScript baseline by leveraging:
 
 1. GPU-parallel tree traversal (10-20×)
-2. Batched neural network inference (5-10×)
+2. Batched neural network inference (5-10×) with shared base model
 3. C++ vs JavaScript performance (2-3×)
 4. Memory and algorithm optimizations (2×)
+
+**Key Architecture Decision**: Use **ONNX Runtime with shared base model** (not LibTorch, not llama.cpp):
+- Export 3 ONNX models: `base_model.onnx` (400MB), `policy_head.onnx` (10MB), `value_head.onnx` (1MB)
+- Share base transformer between policy and value inference → **48% memory savings**
+- Run base model once per batch → **50% inference speedup**
+- Leverage existing `exportOnnx.py` infrastructure
+- Custom tree attention patterns work out-of-the-box
 
 The implementation validates against the existing TypeScript golden reference to ensure correctness.
 
 ---
 
-## Phase 1: Core Infrastructure (Weeks 1-2)
+## Research Documents
 
-### Goal
-Working C++ game engine and CPU-only MCTS that generates legal games.
+See `docs/research/` for detailed analysis:
+- **LLAMA_CPP_ANALYSIS.md**: Comparison of ONNX Runtime vs llama.cpp, justification for chosen approach
+- **MODEL_INFERENCE.md**: Existing ONNX export infrastructure analysis
+- **CUDA_INFERENCE.md**: ONNX Runtime CUDA execution provider guide
+
+---
+
+## Revised Architecture
+
+### Component Stack
+
+```
+Python Training Pipeline (TrigoRL)
+    ↓ exportOnnx.py (EXISTING + MODIFICATIONS)
+ONNX Models (3 separate files)
+    ├─ base_model.onnx (400MB) - Shared GPT-2 transformer with tree attention
+    ├─ policy_head.onnx (10MB) - TreeLM output projection
+    └─ value_head.onnx (1MB)   - EvaluationLM value head
+    ↓
+Python Bindings (pybind11)
+    ↓
+C++ Orchestration Layer
+    ├─ SharedModelInferencer (ONNX Runtime + manual composition)
+    ├─ GameBatchManager (multi-game parallel execution)
+    ├─ PrefixTreeBuilder (port from TypeScript trigoTreeAgent.ts)
+    └─ TGNWriter (output formatting)
+        ↓
+CUDA MCTS Kernels + Trigo Game Engine
+    ├─ select_leaf_kernel (UCB1 traversal)
+    ├─ expand_leaves_kernel (node creation)
+    ├─ backup_values_kernel (value backpropagation)
+    └─ TrigoGame (3D Go rules)
+```
+
+### Memory Budget (Revised)
+
+| Component | Size | Notes |
+|-----------|------|-------|
+| Base model (ONNX) | 400MB | Shared between policy/value |
+| Policy head (ONNX) | 10MB | Output projection only |
+| Value head (ONNX) | 1MB | Small MLP |
+| MCTS tree nodes | 640MB | 8 games × 1M nodes × 80 bytes |
+| Board state cache | 17MB | Delta encoding |
+| Inference buffers | 100MB | Pinned memory |
+| ONNX Runtime | 50MB | Library overhead |
+| **Total** | **~1.2GB** | Fits on 8GB+ GPUs |
+
+**Previous plan**: 1.8GB (duplicate models)
+**Savings**: 600MB (33% reduction)
+
+---
+
+## Phase 0: Planning ✅ COMPLETE
+
+**Status**: Architecture designed, feasibility confirmed
+
+**Key Decisions**:
+- ✅ Use ONNX Runtime (not LibTorch, not llama.cpp)
+- ✅ Implement manual model sharing (3-model architecture)
+- ✅ Start with model inference (Phase 3 first)
+- ✅ Validate against TypeScript golden reference
+
+**Research Completed**:
+- Analyzed existing `exportOnnx.py` capabilities
+- Confirmed ONNX Runtime CUDA support
+- Evaluated llama.cpp vs ONNX Runtime
+- Identified shared model optimization opportunity
+
+---
+
+## Phase 1: Model Inference (Weeks 1-2) ⬅️ START HERE
+
+**Goal**: Working ONNX inference with shared model architecture
+
+**Why Start Here**:
+- Most critical component for MCTS performance
+- Can validate against TypeScript immediately
+- Establishes foundation for rest of system
 
 ### Tasks
 
 #### 1.1 Build System Setup (Days 1-2)
-**Deliverable**: CMake build with all dependencies
+**Deliverable**: CMake build with ONNX Runtime
 
 ```cmake
 # CMakeLists.txt
 cmake_minimum_required(VERSION 3.18)
 project(trigo_cpp CUDA CXX)
 
+# Find CUDA
 find_package(CUDA REQUIRED)
-find_package(Torch REQUIRED)
+find_package(CUDAToolkit REQUIRED)
+
+# ONNX Runtime (GPU build)
+set(ONNXRUNTIME_ROOT_DIR "/path/to/onnxruntime-linux-x64-gpu-1.17.0")
+find_library(ONNXRUNTIME_LIB onnxruntime
+    HINTS ${ONNXRUNTIME_ROOT_DIR}/lib)
+
+# pybind11
 find_package(pybind11 REQUIRED)
 
-add_library(trigo_game src/game_state.cpp)
-add_library(trigo_mcts src/mcts_engine.cu)
-
-pybind11_add_module(cuda_mcts src/bindings.cpp)
-target_link_libraries(cuda_mcts PRIVATE
-    trigo_game
-    trigo_mcts
-    ${TORCH_LIBRARIES}
+# Inference library
+add_library(trigo_inference
+    src/shared_model_inferencer.cpp
+    src/prefix_tree_builder.cpp
+    src/tgn_tokenizer.cpp
 )
+
+target_include_directories(trigo_inference PRIVATE
+    ${ONNXRUNTIME_ROOT_DIR}/include
+    ${CUDAToolkit_INCLUDE_DIRS}
+)
+
+target_link_libraries(trigo_inference PRIVATE
+    ${ONNXRUNTIME_LIB}
+    CUDA::cudart
+)
+
+# Python bindings
+pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
+target_link_libraries(cuda_mcts_inference PRIVATE trigo_inference)
 ```
 
 **Files to create**:
 - `CMakeLists.txt` (root)
 - `setup.py` (Python packaging)
 - `.gitignore`
+- `README.md` (build instructions)
 
-#### 1.2 TrigoGame Class (Days 3-8)
+**Installation**:
+```bash
+# Download ONNX Runtime GPU
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-gpu-1.17.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.17.0.tgz
+export ONNXRUNTIME_ROOT=/path/to/onnxruntime-linux-x64-gpu-1.17.0
+
+# Build
+mkdir build && cd build
+cmake .. -DONNXRUNTIME_ROOT_DIR=$ONNXRUNTIME_ROOT
+make -j$(nproc)
+```
+
+#### 1.2 Export Shared Model Architecture (Days 3-4)
+**Deliverable**: Modified `exportOnnx.py` with `--shared-architecture` mode
+
+**Location**: `/home/camus/work/trigoRL/exportOnnx.py`
+
+**New functionality**:
+```python
+def export_shared_architecture(self, training_dir: str):
+    """
+    Export base model and heads separately for shared inference.
+
+    Outputs:
+        - base_model.onnx: Shared transformer with tree attention
+            Input: input_ids [batch, seq_len]
+                   attention_mask [batch, seq_len, seq_len]
+                   position_ids [batch, seq_len]
+            Output: hidden_states [batch, seq_len, hidden_dim]
+
+        - policy_head.onnx: TreeLM output projection
+            Input: hidden_states [batch, m+1, hidden_dim]
+            Output: logits [batch, m+1, vocab_size]
+
+        - value_head.onnx: EvaluationLM value prediction
+            Input: hidden_states [batch, hidden_dim]
+            Output: values [batch]
+    """
+    # Implementation details in research/LLAMA_CPP_ANALYSIS.md
+```
+
+**Testing**:
+```bash
+# Export from existing checkpoint
+cd /home/camus/work/trigoRL
+python exportOnnx.py training_output/run_xyz \
+    --shared-architecture \
+    --output-dir models/shared/
+
+# Should produce:
+# models/shared/base_model.onnx (~400MB)
+# models/shared/policy_head.onnx (~10MB)
+# models/shared/value_head.onnx (~1MB)
+```
+
+#### 1.3 TGN Tokenizer (Days 5-6)
+**Deliverable**: C++ TGN tokenization compatible with Python
+
+**Header**: `include/tgn_tokenizer.hpp`
+
+```cpp
+#pragma once
+#include <string>
+#include <vector>
+#include <cstdint>
+
+class TGNTokenizer {
+public:
+    // Vocabulary constants (from trigoRL tokenizer)
+    static constexpr int PAD_TOKEN = 0;
+    static constexpr int START_TOKEN = 1;
+    static constexpr int END_TOKEN = 2;
+    static constexpr int VALUE_TOKEN = 3;
+    static constexpr int VOCAB_SIZE = 128;
+
+    // Tokenize TGN string to token IDs
+    static std::vector<int64_t> tokenize(const std::string& tgn);
+
+    // Detokenize token IDs back to string
+    static std::string detokenize(const std::vector<int64_t>& tokens);
+
+    // Convert token ID to character (simple ASCII mapping)
+    static char token_to_char(int64_t token_id);
+
+    // Convert character to token ID
+    static int64_t char_to_token(char c);
+};
+```
+
+**Implementation**: `src/tgn_tokenizer.cpp`
+
+```cpp
+#include "tgn_tokenizer.hpp"
+
+std::vector<int64_t> TGNTokenizer::tokenize(const std::string& tgn) {
+    std::vector<int64_t> tokens;
+    tokens.reserve(tgn.length() + 2);
+
+    // Prepend START token
+    tokens.push_back(START_TOKEN);
+
+    // Convert each character to token (direct ASCII mapping)
+    for (char c : tgn) {
+        tokens.push_back(char_to_token(c));
+    }
+
+    // Append END token
+    tokens.push_back(END_TOKEN);
+
+    return tokens;
+}
+
+int64_t TGNTokenizer::char_to_token(char c) {
+    // Direct identity mapping: token_id = ascii_value
+    // Special tokens: 0-3 (PAD, START, END, VALUE)
+    // 10 = LF (newline)
+    // 32-127 = ASCII printable characters
+    return static_cast<int64_t>(static_cast<unsigned char>(c));
+}
+
+char TGNTokenizer::token_to_char(int64_t token_id) {
+    if (token_id < 0 || token_id > 127) {
+        return '?';  // Unknown token
+    }
+    return static_cast<char>(token_id);
+}
+
+std::string TGNTokenizer::detokenize(const std::vector<int64_t>& tokens) {
+    std::string result;
+    result.reserve(tokens.size());
+
+    for (int64_t token : tokens) {
+        // Skip special tokens
+        if (token == START_TOKEN || token == END_TOKEN ||
+            token == PAD_TOKEN || token == VALUE_TOKEN) {
+            continue;
+        }
+        result += token_to_char(token);
+    }
+
+    return result;
+}
+```
+
+**Validation**:
+```cpp
+// Test against Python tokenizer
+auto tokens = TGNTokenizer::tokenize("3 3 1\na00 b00");
+// Should match: [1, 51, 32, 51, 32, 49, 10, 97, 48, 48, 32, 98, 48, 48, 2]
+```
+
+#### 1.4 Prefix Tree Builder (Days 7-10)
+**Deliverable**: C++ port of TypeScript prefix tree algorithm
+
+**Source**: `/home/camus/work/trigoRL/third_party/trigo/trigo-web/inc/trigoTreeAgent.ts` lines 77-168
+
+**Header**: `include/prefix_tree_builder.hpp`
+
+```cpp
+#pragma once
+#include <vector>
+#include <string>
+#include <cstdint>
+
+struct Move {
+    int16_t x, y, z;
+    int8_t type;  // 0=place, 1=pass
+};
+
+struct TreeStructure {
+    // Token sequences
+    std::vector<int64_t> prefix_ids;      // [n] prefix tokens
+    std::vector<int64_t> evaluated_ids;   // [m] evaluated tokens (flattened tree)
+
+    // Attention mask for evaluated region
+    std::vector<float> evaluated_mask;    // [m, m] attention pattern (0/1)
+
+    // Mapping from move index to leaf position in evaluated_ids
+    std::vector<int> move_to_leaf;        // [num_moves] → leaf index
+
+    // Token sequences for each move (for debugging)
+    std::vector<std::vector<int64_t>> move_tokens;  // [num_moves][tokens]
+
+    // Dimensions
+    int prefix_len;  // n
+    int eval_len;    // m
+    int num_moves;
+};
+
+class PrefixTreeBuilder {
+public:
+    // Build prefix tree from game state and legal moves
+    TreeStructure build_tree(
+        const std::string& prefix_tgn,
+        const std::vector<Move>& moves
+    );
+
+private:
+    // Recursive tree building (port from TypeScript)
+    struct TokenSequence {
+        std::vector<int64_t> tokens;
+        int move_index;
+    };
+
+    struct TreeNode {
+        int64_t token;
+        std::vector<TreeNode> children;
+        std::vector<int> leaf_moves;  // Move indices for leaves
+    };
+
+    TreeNode build_recursive(
+        const std::vector<TokenSequence>& sequences,
+        int depth = 0
+    );
+
+    // Convert move to token sequence
+    std::vector<int64_t> move_to_tokens(const Move& move);
+
+    // Flatten tree to evaluated_ids and build mask
+    void flatten_tree(
+        const TreeNode& root,
+        std::vector<int64_t>& evaluated_ids,
+        std::vector<float>& evaluated_mask,
+        std::vector<int>& move_to_leaf
+    );
+
+    // Build ancestor attention mask
+    void build_ancestor_mask(
+        const TreeNode& root,
+        std::vector<float>& mask,
+        int num_nodes
+    );
+};
+```
+
+**Key Algorithm** (recursive grouping):
+
+```cpp
+TreeNode PrefixTreeBuilder::build_recursive(
+    const std::vector<TokenSequence>& sequences,
+    int depth
+) {
+    if (sequences.empty()) {
+        return TreeNode{};
+    }
+
+    // Group sequences by first token
+    std::map<int64_t, std::vector<TokenSequence>> groups;
+    for (const auto& seq : sequences) {
+        if (seq.tokens.empty()) {
+            // Leaf node - this is a complete move
+            continue;
+        }
+
+        int64_t first_token = seq.tokens[0];
+        TokenSequence residue = seq;
+        residue.tokens.erase(residue.tokens.begin());
+
+        groups[first_token].push_back(residue);
+    }
+
+    // Build tree nodes for each unique first token
+    TreeNode root;
+    for (const auto& [token, group] : groups) {
+        TreeNode child;
+        child.token = token;
+
+        // Recurse on remaining tokens
+        if (!group.empty() && !group[0].tokens.empty()) {
+            child = build_recursive(group, depth + 1);
+            child.token = token;  // Set token at this level
+        }
+
+        root.children.push_back(child);
+    }
+
+    return root;
+}
+```
+
+**Testing**: Compare outputs with TypeScript implementation
+
+#### 1.5 Shared Model Inferencer (Days 11-13)
+**Deliverable**: C++ class that loads 3 ONNX models and composes inference
+
+**Header**: `include/shared_model_inferencer.hpp`
+
+```cpp
+#pragma once
+#include <onnxruntime_cxx_api.h>
+#include <string>
+#include <vector>
+#include "prefix_tree_builder.hpp"
+
+class SharedModelInferencer {
+public:
+    SharedModelInferencer(
+        const std::string& base_model_path,
+        const std::string& policy_head_path,
+        const std::string& value_head_path,
+        int gpu_device_id = 0
+    );
+
+    ~SharedModelInferencer();
+
+    // Combined inference (policy + value)
+    struct InferenceResult {
+        std::vector<std::vector<float>> policy_probs;  // [batch][num_moves]
+        std::vector<float> values;                      // [batch]
+        float inference_time_ms;
+    };
+
+    InferenceResult infer_batch(
+        const std::vector<std::string>& state_tgns,
+        const std::vector<std::vector<Move>>& legal_moves
+    );
+
+    // Policy-only inference (faster when value not needed)
+    std::vector<std::vector<float>> infer_policy_batch(
+        const std::vector<std::string>& state_tgns,
+        const std::vector<std::vector<Move>>& legal_moves
+    );
+
+    // Value-only inference
+    std::vector<float> infer_value_batch(
+        const std::vector<std::string>& state_tgns
+    );
+
+private:
+    // ONNX Runtime components
+    Ort::Env env_;
+    Ort::SessionOptions session_options_;
+
+    Ort::Session base_session_;
+    Ort::Session policy_session_;
+    Ort::Session value_session_;
+
+    Ort::MemoryInfo memory_info_;
+    Ort::AllocatorWithDefaultOptions allocator_;
+
+    // Helper components
+    PrefixTreeBuilder tree_builder_;
+
+    // Model metadata
+    std::vector<const char*> base_input_names_;
+    std::vector<const char*> base_output_names_;
+    std::vector<const char*> policy_input_names_;
+    std::vector<const char*> policy_output_names_;
+    std::vector<const char*> value_input_names_;
+    std::vector<const char*> value_output_names_;
+
+    int vocab_size_;
+    int hidden_dim_;
+
+    // Core inference methods
+    Ort::Value run_base_model(
+        const std::vector<int64_t>& input_ids,
+        const std::vector<float>& attention_mask,
+        const std::vector<int64_t>& position_ids,
+        const std::vector<int64_t>& input_shape
+    );
+
+    std::vector<std::vector<float>> run_policy_head(
+        const Ort::Value& hidden_states,
+        const std::vector<TreeStructure>& trees
+    );
+
+    std::vector<float> run_value_head(
+        const Ort::Value& hidden_states
+    );
+
+    // Utility methods
+    std::vector<int64_t> build_position_ids(
+        const TreeStructure& tree
+    );
+
+    std::vector<float> apply_softmax(
+        const float* logits,
+        int vocab_size
+    );
+};
+```
+
+**Key Implementation**:
+
+```cpp
+SharedModelInferencer::InferenceResult
+SharedModelInferencer::infer_batch(
+    const std::vector<std::string>& state_tgns,
+    const std::vector<std::vector<Move>>& legal_moves
+) {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    int batch_size = state_tgns.size();
+
+    // Step 1: Build prefix trees for all games
+    std::vector<TreeStructure> trees;
+    for (int i = 0; i < batch_size; i++) {
+        trees.push_back(tree_builder_.build_tree(
+            state_tgns[i], legal_moves[i]
+        ));
+    }
+
+    // Step 2: Prepare batched inputs
+    // ... (pad to max lengths, construct tensors)
+
+    // Step 3: Run base model ONCE
+    auto hidden_states = run_base_model(
+        input_ids, attention_mask, position_ids, input_shape
+    );
+
+    // Step 4: Run policy head
+    auto policy_probs = run_policy_head(hidden_states, trees);
+
+    // Step 5: Run value head
+    auto values = run_value_head(hidden_states);
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    float elapsed_ms = std::chrono::duration<float, std::milli>(
+        end_time - start_time
+    ).count();
+
+    return InferenceResult{policy_probs, values, elapsed_ms};
+}
+```
+
+#### 1.6 Python Bindings (Day 14)
+**Deliverable**: pybind11 interface for inference
+
+**File**: `src/bindings.cpp`
+
+```cpp
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
+#include "shared_model_inferencer.hpp"
+
+namespace py = pybind11;
+
+PYBIND11_MODULE(cuda_mcts_inference, m) {
+    m.doc() = "CUDA-accelerated MCTS inference for Trigo";
+
+    // Move structure
+    py::class_<Move>(m, "Move")
+        .def(py::init<>())
+        .def_readwrite("x", &Move::x)
+        .def_readwrite("y", &Move::y)
+        .def_readwrite("z", &Move::z)
+        .def_readwrite("type", &Move::type);
+
+    // Inference result
+    py::class_<SharedModelInferencer::InferenceResult>(m, "InferenceResult")
+        .def_readonly("policy_probs", &SharedModelInferencer::InferenceResult::policy_probs)
+        .def_readonly("values", &SharedModelInferencer::InferenceResult::values)
+        .def_readonly("inference_time_ms", &SharedModelInferencer::InferenceResult::inference_time_ms);
+
+    // Main inferencer class
+    py::class_<SharedModelInferencer>(m, "SharedModelInferencer")
+        .def(py::init<const std::string&, const std::string&, const std::string&, int>(),
+             py::arg("base_model_path"),
+             py::arg("policy_head_path"),
+             py::arg("value_head_path"),
+             py::arg("gpu_device_id") = 0)
+        .def("infer_batch", &SharedModelInferencer::infer_batch)
+        .def("infer_policy_batch", &SharedModelInferencer::infer_policy_batch)
+        .def("infer_value_batch", &SharedModelInferencer::infer_value_batch);
+}
+```
+
+**Python Usage**:
+
+```python
+import cuda_mcts_inference as cmi
+
+# Load models
+inferencer = cmi.SharedModelInferencer(
+    "models/shared/base_model.onnx",
+    "models/shared/policy_head.onnx",
+    "models/shared/value_head.onnx",
+    gpu_device_id=0
+)
+
+# Prepare input
+state_tgns = ["3 3 1\na00 b00", "3 3 1\na00"]
+legal_moves = [
+    [cmi.Move(x=0, y=1, z=0, type=0), cmi.Move(x=1, y=0, z=0, type=0)],
+    [cmi.Move(x=0, y=0, z=0, type=0), cmi.Move(x=1, y=0, z=0, type=0)]
+]
+
+# Run inference
+result = inferencer.infer_batch(state_tgns, legal_moves)
+
+print(f"Policy probs: {result.policy_probs}")
+print(f"Values: {result.values}")
+print(f"Time: {result.inference_time_ms:.2f}ms")
+```
+
+### Validation (Phase 1)
+
+```python
+# test_inference.py - Validate against TypeScript
+
+import cuda_mcts_inference as cmi
+import subprocess
+import json
+import numpy as np
+
+def test_policy_inference():
+    """Compare C++ policy inference with TypeScript"""
+
+    # Test case
+    test_tgn = "3 3 1\na00 b00 a10"
+    test_moves = [
+        cmi.Move(x=1, y=1, z=0, type=0),  # b10
+        cmi.Move(x=2, y=1, z=0, type=0),  # c10
+    ]
+
+    # C++ inference
+    inferencer = cmi.SharedModelInferencer(
+        "models/shared/base_model.onnx",
+        "models/shared/policy_head.onnx",
+        "models/shared/value_head.onnx"
+    )
+    cpp_result = inferencer.infer_batch([test_tgn], [test_moves])
+    cpp_probs = cpp_result.policy_probs[0]
+
+    # TypeScript inference (via Node.js)
+    ts_result = run_typescript_inference(test_tgn, test_moves, "policy")
+    ts_probs = ts_result['policy_probs']
+
+    # Compare (should be very close, allow small numerical differences)
+    assert np.allclose(cpp_probs, ts_probs, rtol=1e-4, atol=1e-5)
+    print("✓ Policy inference matches TypeScript")
+
+def test_value_inference():
+    """Compare C++ value inference with TypeScript"""
+
+    test_tgn = "3 3 1\na00 b00 a10 b10"
+
+    inferencer = cmi.SharedModelInferencer(...)
+    cpp_result = inferencer.infer_batch([test_tgn], [[]])
+    cpp_value = cpp_result.values[0]
+
+    ts_result = run_typescript_inference(test_tgn, None, "value")
+    ts_value = ts_result['value']
+
+    assert abs(cpp_value - ts_value) < 0.001
+    print("✓ Value inference matches TypeScript")
+
+def run_typescript_inference(tgn, moves, mode):
+    """Run TypeScript inference via subprocess"""
+    # Call into TypeScript codebase
+    # ...
+    pass
+
+if __name__ == "__main__":
+    test_policy_inference()
+    test_value_inference()
+    print("\n✓ All inference tests passed!")
+```
+
+**Phase 1 Complete**: Working ONNX inference with shared model, validated against TypeScript
+
+---
+
+## Phase 2: Core Game Engine (Weeks 3-4)
+
+**Goal**: Complete Trigo game engine in C++
+
+**Note**: This is the original "Phase 1" content, now moved to Phase 2 since we're starting with inference.
+
+### Tasks
+
+#### 2.1 TrigoGame Class (Days 15-20)
 **Deliverable**: Complete Trigo game engine in C++
 
 **Port from TypeScript**:
@@ -126,105 +804,12 @@ private:
 };
 ```
 
-**Critical algorithms to port**:
+**Critical algorithms** (from TypeScript):
+1. Capture detection via flood fill (gameUtils.ts:124-235)
+2. Ko rule enforcement (gameUtils.ts:300-350)
+3. TGN conversion (game.ts:500-650)
 
-1. **Capture Detection** (from `gameUtils.ts:124-235`):
-```cpp
-std::vector<Position> TrigoGame::find_captured_groups(const Position& pos) {
-    std::vector<Position> captured;
-    int8_t enemy = (board_[pos.x][pos.y][pos.z] == 1) ? 2 : 1;
-
-    // Check all 6 neighbors
-    for (const auto& neighbor : get_neighbors(pos)) {
-        if (board_[neighbor.x][neighbor.y][neighbor.z] != enemy) {
-            continue;
-        }
-
-        // BFS to find connected group
-        auto group = flood_fill_group(neighbor, enemy);
-
-        // Count liberties (empty neighbors)
-        if (count_liberties(group) == 0) {
-            captured.insert(captured.end(), group.begin(), group.end());
-        }
-    }
-
-    return captured;
-}
-
-std::vector<Position> TrigoGame::flood_fill_group(
-    const Position& start, int8_t color
-) {
-    std::vector<Position> group;
-    std::queue<Position> queue;
-    std::set<std::tuple<int, int, int>> visited;
-
-    queue.push(start);
-    visited.insert({start.x, start.y, start.z});
-
-    while (!queue.empty()) {
-        Position pos = queue.front();
-        queue.pop();
-        group.push_back(pos);
-
-        for (const auto& neighbor : get_neighbors(pos)) {
-            if (board_[neighbor.x][neighbor.y][neighbor.z] == color &&
-                !visited.count({neighbor.x, neighbor.y, neighbor.z})) {
-                queue.push(neighbor);
-                visited.insert({neighbor.x, neighbor.y, neighbor.z});
-            }
-        }
-    }
-
-    return group;
-}
-```
-
-2. **Ko Rule** (from `gameUtils.ts:300-350`):
-```cpp
-bool TrigoGame::is_ko_violation(const Move& move) const {
-    // Ko: Can't recapture immediately if it recreates previous position
-    if (last_captured_.size() != 1) {
-        return false;  // Ko only applies to single stone captures
-    }
-
-    Position last_cap = last_captured_[0];
-    return (move.x == last_cap.x &&
-            move.y == last_cap.y &&
-            move.z == last_cap.z);
-}
-```
-
-3. **TGN Conversion** (from `game.ts:500-650`):
-```cpp
-std::string TrigoGame::to_tgn() const {
-    std::ostringstream ss;
-
-    // Header: board shape
-    ss << shape_x_ << " " << shape_y_ << " " << shape_z_ << "\n";
-
-    // Moves in ab0yz notation
-    for (const auto& move : history_) {
-        if (move.type == 1) {  // Pass
-            ss << "pass ";
-        } else {
-            ss << encode_ab0yz(move.x, move.y, move.z,
-                              shape_x_, shape_y_, shape_z_) << " ";
-        }
-    }
-
-    // Score (if game ended)
-    if (is_terminal()) {
-        auto territory = get_territory();
-        int score_diff = territory.white - territory.black;
-        ss << "; " << score_diff;
-    }
-
-    return ss.str();
-}
-```
-
-#### 1.3 Basic MCTS (CPU) (Days 9-12)
+#### 2.2 Basic MCTS (CPU) (Days 21-24)
 **Deliverable**: CPU-only MCTS that generates games
 
 ```cpp
@@ -264,26 +849,10 @@ private:
 };
 ```
 
-**UCB1 Formula**:
-```cpp
-float MCTSEngine::compute_ucb1(const MCTSNode& node, float parent_visits) {
-    float Q = node.mean_value;
-    float U = c_puct_ * node.prior_prob *
-              sqrtf(parent_visits) / (1.0f + node.visit_count);
-    return Q + U;
-}
-```
-
-#### 1.4 Python Bindings (Days 13-14)
-**Deliverable**: Python-callable interface
+#### 2.3 Python Bindings for Game Engine (Days 25-26)
+**Deliverable**: Python-callable game interface
 
 ```cpp
-// src/bindings.cpp
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-
-namespace py = pybind11;
-
 PYBIND11_MODULE(cuda_mcts, m) {
     py::class_<TrigoGame>(m, "TrigoGame")
         .def(py::init<int, int, int>())
@@ -296,28 +865,16 @@ PYBIND11_MODULE(cuda_mcts, m) {
         .def(py::init<int, int>())
         .def("select_leaf", &MCTSEngine::select_leaf)
         .def("expand_node", &MCTSEngine::expand_node)
-        .def("backup", &MCTSEngine::backup)
-        .def("get_best_move", &MCTSEngine::get_best_move);
+        .def("backup", &MCTSEngine::backup);
 }
 ```
 
-**Python usage**:
-```python
-import cuda_mcts
-
-game = cuda_mcts.TrigoGame(3, 3, 1)
-moves = game.get_legal_moves()
-game.apply_move(moves[0])
-tgn = game.to_tgn()
-```
-
-### Validation (Phase 1)
+#### 2.4 Validation Tests (Days 27-28)
+**Deliverable**: Test suite comparing against TypeScript
 
 ```python
-# tests/test_game_state.py
 def test_capture_detection():
     """Test capture matches TypeScript"""
-    # Create identical board state in both
     ts_game = run_typescript_game(moves)
     cpp_game = cuda_mcts.TrigoGame(3, 3, 1)
     for move in moves:
@@ -333,18 +890,17 @@ def test_ko_rule():
     assert not game.apply_move(ko_move)
 ```
 
-**Phase 1 Complete**: Python-callable C++ MCTS generates legal games (CPU-only)
+**Phase 2 Complete**: Python-callable C++ game engine generating legal games (CPU-only)
 
 ---
 
-## Phase 2: CUDA Kernels (Weeks 3-4)
+## Phase 3: CUDA MCTS Kernels (Weeks 5-6)
 
-### Goal
-GPU-accelerated tree operations, 10-20× faster than CPU.
+**Goal**: GPU-accelerated tree operations, 10-20× faster than CPU
 
 ### Tasks
 
-#### 2.1 GPU Memory Layout (Days 15-17)
+#### 3.1 GPU Memory Layout (Days 29-31)
 **Deliverable**: Efficient GPU memory structures
 
 ```cpp
@@ -372,28 +928,7 @@ private:
 };
 ```
 
-**Board State Cache** (delta encoding):
-```cpp
-struct BoardStateDelta {
-    int16_t x, y, z;
-    int8_t stone_type;
-    int8_t action;  // 0=place, 1=remove
-};
-
-class GameStateCache {
-    // Root boards (full state)
-    int8_t* d_root_boards;  // [num_games][9][9][9]
-
-    // Delta history
-    BoardStateDelta* d_deltas;  // [MAX_NODES][max_deltas]
-    int* d_delta_counts;        // [MAX_NODES]
-
-    // Reconstruct board at node
-    __device__ void reconstruct(int node_idx, int8_t* out_board);
-};
-```
-
-#### 2.2 UCB1 Selection Kernel (Days 18-20)
+#### 3.2 UCB1 Selection Kernel (Days 32-34)
 **Deliverable**: GPU kernel for tree traversal
 
 ```cuda
@@ -411,28 +946,8 @@ __global__ void select_leaf_kernel(
 
     // Traverse until leaf
     while (nodes[current].first_child_idx != -1) {
-        int child_idx = nodes[current].first_child_idx;
-        float best_ucb = -INFINITY;
-        int best_child = -1;
-
-        float parent_visits = nodes[current].visit_count;
-
         // Find child with max UCB1
-        while (child_idx != -1) {
-            float Q = nodes[child_idx].mean_value;
-            float U = c_puct * nodes[child_idx].prior_prob *
-                      sqrtf(parent_visits) /
-                      (1.0f + nodes[child_idx].visit_count);
-            float ucb = Q + U;
-
-            if (ucb > best_ucb) {
-                best_ucb = ucb;
-                best_child = child_idx;
-            }
-
-            child_idx = nodes[child_idx].next_sibling_idx;
-        }
-
+        // ...
         current = best_child;
     }
 
@@ -440,855 +955,82 @@ __global__ void select_leaf_kernel(
 }
 ```
 
-**Launch configuration**:
-```cpp
-int block_size = 256;
-int num_blocks = (num_games + block_size - 1) / block_size;
-select_leaf_kernel<<<num_blocks, block_size>>>(
-    d_nodes, d_roots, num_games, c_puct, d_leaves
-);
-```
-
-#### 2.3 Expansion Kernel (Days 21-23)
+#### 3.3 Expansion Kernel (Days 35-37)
 **Deliverable**: GPU kernel for child creation
 
-```cuda
-__global__ void expand_leaves_kernel(
-    MCTSNode* nodes,
-    GameState* games,
-    TreeMemoryPool::GPUPool* pool,
-    const int* leaf_indices,
-    int leaf_count,
-    const float* policy_probs,
-    int num_legal_moves
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= leaf_count) return;
-
-    int leaf_idx = leaf_indices[idx];
-    int game_id = nodes[leaf_idx].game_id;
-
-    // Allocate children
-    int first_child = -1;
-    int prev_child = -1;
-
-    for (int i = 0; i < num_legal_moves; i++) {
-        int child_idx = atomicAdd(&pool->alloc_counters[game_id], 1);
-        if (child_idx >= MAX_NODES_PER_GAME) break;
-
-        int global_idx = game_id * MAX_NODES_PER_GAME + child_idx;
-
-        // Initialize child
-        nodes[global_idx].parent_idx = leaf_idx;
-        nodes[global_idx].first_child_idx = -1;
-        nodes[global_idx].next_sibling_idx = -1;
-        nodes[global_idx].visit_count = 0;
-        nodes[global_idx].total_value = 0;
-        nodes[global_idx].prior_prob = policy_probs[i];
-        nodes[global_idx].game_id = game_id;
-
-        // Link siblings
-        if (first_child == -1) {
-            first_child = global_idx;
-        } else {
-            nodes[prev_child].next_sibling_idx = global_idx;
-        }
-        prev_child = global_idx;
-    }
-
-    // Update parent
-    nodes[leaf_idx].first_child_idx = first_child;
-    nodes[leaf_idx].num_children = num_legal_moves;
-}
-```
-
-#### 2.4 Backpropagation Kernel (Days 24-26)
+#### 3.4 Backpropagation Kernel (Days 38-40)
 **Deliverable**: GPU kernel for value updates
 
-```cuda
-__global__ void backup_values_kernel(
-    MCTSNode* nodes,
-    const int* leaf_indices,
-    const float* values,
-    int leaf_count
-) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= leaf_count) return;
-
-    int current = leaf_indices[idx];
-    float value = values[idx];
-
-    // Backpropagate to root
-    while (current != -1) {
-        // Atomic updates
-        atomicAdd(&nodes[current].visit_count, 1.0f);
-        atomicAdd(&nodes[current].total_value, value);
-
-        // Update mean (non-atomic, eventual consistency OK)
-        nodes[current].mean_value =
-            nodes[current].total_value / nodes[current].visit_count;
-
-        // Move to parent, flip value for opponent
-        current = nodes[current].parent_idx;
-        value = -value;
-    }
-}
-```
-
-#### 2.5 Kernel Profiling (Days 27-28)
+#### 3.5 Kernel Profiling (Days 41-42)
 **Deliverable**: Performance analysis and tuning
 
-```bash
-# Profile with nvprof
-nvprof --print-gpu-trace ./build/trigo_mcts_test
-
-# Analyze occupancy
-nvprof --analysis-metrics -o profile.nvprof ./build/trigo_mcts_test
-nvvp profile.nvprof
-
-# Check memory transfers
-nvprof --print-api-trace ./build/trigo_mcts_test
-```
-
-**Optimization targets**:
-- Coalesced memory access (align structs, sequential reads)
-- Minimize warp divergence (balanced tree traversal)
-- Use shared memory for hot data (current node)
-- Reduce atomic contention (backprop batching)
-
-### Validation (Phase 2)
-
-```python
-def test_gpu_cpu_equivalence():
-    """GPU and CPU produce same results"""
-    game = cuda_mcts.TrigoGame(3, 3, 1)
-
-    # Run MCTS on CPU
-    cpu_engine = MCTSEngine(num_games=1, device='cpu')
-    cpu_move = cpu_engine.search(game, num_sims=100)
-
-    # Run MCTS on GPU
-    gpu_engine = MCTSEngine(num_games=1, device='cuda')
-    gpu_move = gpu_engine.search(game, num_sims=100)
-
-    # Visit counts should be identical
-    assert cpu_move == gpu_move
-```
-
-**Phase 2 Complete**: MCTS runs on GPU, 10-20× faster than CPU
+**Phase 3 Complete**: MCTS runs on GPU, 10-20× faster than CPU
 
 ---
 
-## Phase 3: Neural Network Integration (Weeks 5-6)
+## Phase 4: Integration (Weeks 7-8)
 
-### Goal
-Batched policy/value inference with LibTorch.
+**Goal**: Full system with inference + MCTS + validation
 
 ### Tasks
 
-#### 3.1 Prefix Tree Builder (Days 29-33)
-**Deliverable**: Port from TypeScript `trigoTreeAgent.ts:77-168`
+#### 4.1 Integrate Inference with MCTS (Days 43-45)
+**Deliverable**: MCTS calls SharedModelInferencer for evaluations
 
-```cpp
-class PrefixTreeBuilder {
-public:
-    struct TreeStructure {
-        std::vector<int32_t> evaluated_ids;  // [m] tokens
-        std::vector<float> evaluated_mask;   // [m][m] attention
-        std::vector<int> move_to_leaf;       // Move → leaf index
-        int num_nodes;
-    };
-
-    TreeStructure build_tree(
-        const std::string& prefix_tgn,
-        const std::vector<Move>& moves
-    );
-
-private:
-    // Recursive grouping (port from TypeScript)
-    struct TokenSeq {
-        std::vector<int32_t> tokens;
-        int move_idx;
-    };
-
-    TreeStructure build_recursive(
-        const std::vector<TokenSeq>& seqs,
-        int depth = 0
-    );
-
-    // Token conversion
-    std::vector<int32_t> move_to_tokens(const Move& move);
-};
-```
-
-**Algorithm** (from TypeScript):
-```cpp
-TreeStructure PrefixTreeBuilder::build_recursive(
-    const std::vector<TokenSeq>& seqs, int depth
-) {
-    if (seqs.empty()) {
-        return TreeStructure();
-    }
-
-    // Group by first token
-    std::map<int32_t, std::vector<TokenSeq>> groups;
-    for (const auto& seq : seqs) {
-        if (seq.tokens.empty()) continue;
-        int32_t first = seq.tokens[0];
-        TokenSeq residue = seq;
-        residue.tokens.erase(residue.tokens.begin());
-        groups[first].push_back(residue);
-    }
-
-    // Build nodes
-    TreeStructure result;
-    for (const auto& [token, group] : groups) {
-        result.evaluated_ids.push_back(token);
-
-        if (!group[0].tokens.empty()) {
-            // Recurse on residues
-            auto subtree = build_recursive(group, depth + 1);
-            result.evaluated_ids.insert(
-                result.evaluated_ids.end(),
-                subtree.evaluated_ids.begin(),
-                subtree.evaluated_ids.end()
-            );
-        }
-    }
-
-    // Build ancestor mask
-    int m = result.evaluated_ids.size();
-    result.evaluated_mask.resize(m * m, 0.0f);
-    // ... (mask construction logic)
-
-    return result;
-}
-```
-
-#### 3.2 Policy Model Adapter (Days 34-37)
-**Deliverable**: TreeLM inference via LibTorch
-
-```cpp
-class PolicyModelAdapter {
-public:
-    PolicyModelAdapter(torch::jit::script::Module model);
-
-    // Batch inference
-    std::vector<std::vector<float>> infer_batch(
-        const std::vector<std::string>& prefix_tgns,
-        const std::vector<std::vector<Move>>& move_batches
-    );
-
-private:
-    torch::jit::script::Module model_;
-    PrefixTreeBuilder tree_builder_;
-
-    // Convert to tensors
-    torch::Tensor tokenize(const std::string& tgn);
-    torch::Tensor create_prefix_tensor(const std::vector<std::string>& tgns);
-    torch::Tensor create_evaluated_tensor(const std::vector<TreeStructure>& trees);
-    torch::Tensor create_mask_tensor(const std::vector<TreeStructure>& trees);
-
-    // Extract probabilities
-    std::vector<float> extract_move_probs(
-        const torch::Tensor& logits,
-        const TreeStructure& tree
-    );
-};
-```
-
-**Inference**:
-```cpp
-std::vector<std::vector<float>> PolicyModelAdapter::infer_batch(
-    const std::vector<std::string>& prefix_tgns,
-    const std::vector<std::vector<Move>>& move_batches
-) {
-    int batch_size = prefix_tgns.size();
-
-    // Build prefix trees
-    std::vector<TreeStructure> trees;
-    for (int i = 0; i < batch_size; i++) {
-        trees.push_back(tree_builder_.build_tree(
-            prefix_tgns[i], move_batches[i]
-        ));
-    }
-
-    // Create input tensors
-    auto prefix_ids = create_prefix_tensor(prefix_tgns);
-    auto evaluated_ids = create_evaluated_tensor(trees);
-    auto evaluated_mask = create_mask_tensor(trees);
-
-    // Forward pass
-    std::vector<torch::jit::IValue> inputs = {
-        prefix_ids, evaluated_ids, evaluated_mask
-    };
-    auto output = model_.forward(inputs).toTensor();
-
-    // Extract probabilities
-    std::vector<std::vector<float>> all_probs;
-    for (int i = 0; i < batch_size; i++) {
-        auto logits = output[i];  // [m+1, vocab_size]
-        all_probs.push_back(extract_move_probs(logits, trees[i]));
-    }
-
-    return all_probs;
-}
-```
-
-#### 3.3 Value Model Adapter (Days 38-40)
-**Deliverable**: EvaluationLM inference
-
-```cpp
-class ValueModelAdapter {
-public:
-    ValueModelAdapter(torch::jit::script::Module model);
-
-    // Batch inference
-    std::vector<float> infer_batch(
-        const std::vector<std::string>& state_tgns
-    );
-
-private:
-    torch::jit::script::Module model_;
-
-    torch::Tensor tokenize_batch(const std::vector<std::string>& tgns);
-};
-```
-
-**Simpler than policy** (no prefix tree):
-```cpp
-std::vector<float> ValueModelAdapter::infer_batch(
-    const std::vector<std::string>& state_tgns
-) {
-    // Tokenize all states
-    auto input_ids = tokenize_batch(state_tgns);
-
-    // Forward (model appends VALUE token internally)
-    auto output = model_.forward({input_ids}).toTensor();
-
-    // Extract values
-    std::vector<float> values;
-    for (int i = 0; i < output.size(0); i++) {
-        values.push_back(output[i].item<float>());
-    }
-
-    return values;
-}
-```
-
-#### 3.4 Dynamic Batching (Days 41-42)
+#### 4.2 Dynamic Batching System (Days 46-48)
 **Deliverable**: Timeout-based batch aggregation
 
-```cpp
-class DynamicBatcher {
-public:
-    static constexpr int MAX_BATCH = 64;
-    static constexpr int TIMEOUT_MS = 10;
-
-    struct EvalRequest {
-        int leaf_idx;
-        std::string state_tgn;
-        std::vector<Move> legal_moves;
-        std::promise<EvalResult> promise;
-    };
-
-    // Submit request (called by MCTS threads)
-    std::future<EvalResult> submit(EvalRequest req);
-
-    // Process batch (inference thread)
-    void process_batch();
-
-private:
-    std::queue<EvalRequest> pending_;
-    std::mutex mutex_;
-    std::condition_variable cv_;
-
-    PolicyModelAdapter policy_;
-    ValueModelAdapter value_;
-};
-```
-
-**Usage**:
-```cpp
-// MCTS thread
-auto future = batcher.submit({leaf_idx, tgn, moves});
-
-// Wait for result
-auto result = future.get();  // Blocks until batch processed
-expand_node(leaf_idx, result.policy_probs);
-backup(leaf_idx, result.value);
-```
-
-### Validation (Phase 3)
-
-```python
-def test_policy_inference():
-    """Test TreeLM integration"""
-    policy = torch.jit.load("models/policy_tree.pt")
-    adapter = cuda_mcts.PolicyModelAdapter(policy)
-
-    game = cuda_mcts.TrigoGame(3, 3, 1)
-    moves = game.get_legal_moves()
-    probs = adapter.infer_batch([game.to_tgn()], [moves])
-
-    # Check probabilities sum to 1
-    assert abs(sum(probs[0]) - 1.0) < 1e-5
-    assert len(probs[0]) == len(moves)
-
-def test_value_inference():
-    """Test EvaluationLM integration"""
-    value = torch.jit.load("models/value_eval.pt")
-    adapter = cuda_mcts.ValueModelAdapter(value)
-
-    game = cuda_mcts.TrigoGame(3, 3, 1)
-    values = adapter.infer_batch([game.to_tgn()])
-
-    # Check value in range [-1, 1]
-    assert -1.0 <= values[0] <= 1.0
-```
-
-**Phase 3 Complete**: Full MCTS with neural network guidance
-
----
-
-## Phase 4: Validation & Optimization (Weeks 7-8)
-
-### Goal
-Correctness verified, performance optimized, 300+ games/hour achieved.
-
-### Tasks
-
-#### 4.1 Comprehensive Validation Suite (Days 43-47)
-**Deliverable**: Validation against TypeScript golden reference
-
-```python
-# tools/validate_mcts.py
-import subprocess
-import cuda_mcts
-import torch
-from pathlib import Path
-
-def run_typescript_selfplay(board_shape, seed, num_games):
-    """Generate games with TypeScript"""
-    cmd = [
-        "npx", "tsx",
-        "../trigoRL/third_party/trigo/trigo-web/tools/selfPlayGames.ts",
-        "--games", str(num_games),
-        "--board", f"{board_shape[0]}*{board_shape[1]}*{board_shape[2]}",
-        "--seed", str(seed),
-        "--output", "validation/ts_output"
-    ]
-    subprocess.run(cmd, check=True, cwd=".")
-    return list(Path("validation/ts_output").glob("*.tgn"))
-
-def run_cuda_selfplay(board_shape, seed, num_games):
-    """Generate games with C++/CUDA"""
-    torch.manual_seed(seed)
-
-    policy = torch.jit.load("models/policy_tree.pt")
-    value = torch.jit.load("models/value_eval.pt")
-
-    engine = cuda_mcts.CudaMCTSSelfPlay(
-        policy, value,
-        num_parallel_games=1,  # Deterministic
-        mcts_simulations=800
-    )
-
-    return engine.generate_games(num_games, [board_shape])
-
-def validate_game(tgn):
-    """Validate single game"""
-    from trigor.data import TGNValueDataset
-
-    # Parse with TGNValueDataset
-    dataset = TGNValueDataset.from_string(tgn)
-
-    # Check all moves legal
-    game = cuda_mcts.TrigoGame.from_tgn(tgn)
-    assert game.is_valid(), "Game contains illegal moves"
-
-    # Check territory score
-    territory = game.get_territory()
-    score_diff = territory.white - territory.black
-    assert tgn.endswith(f"; {score_diff}"), "Score mismatch"
-
-    return True
-
-def main():
-    test_cases = [
-        {"board": (3, 3, 1), "seed": 42, "games": 10},
-        {"board": (5, 5, 1), "seed": 123, "games": 10},
-        {"board": (2, 2, 2), "seed": 456, "games": 10},
-    ]
-
-    for tc in test_cases:
-        print(f"\nTesting {tc['board']} with seed {tc['seed']}...")
-
-        # Generate with both implementations
-        ts_games = run_typescript_selfplay(**tc)
-        cuda_games = run_cuda_selfplay(**tc)
-
-        # Validate CUDA games
-        for i, tgn in enumerate(cuda_games):
-            print(f"  Validating game {i+1}/{len(cuda_games)}...", end="")
-            assert validate_game(tgn), f"Game {i+1} invalid"
-            print(" ✓")
-
-        print(f"✓ All {len(cuda_games)} games valid")
-```
-
-#### 4.2 Performance Profiling (Days 48-50)
-**Deliverable**: Bottleneck analysis
-
-```bash
-# Profile MCTS
-nsys profile --stats=true -o profile.qdrep \
-    python scripts/benchmark_mcts.py
-
-# Analyze
-nsys-ui profile.qdrep
-
-# Check kernel execution
-ncu --set full -o kernel_profile \
-    python scripts/benchmark_mcts.py
-
-# Memory bandwidth
-ncu --metrics dram__bytes.sum.per_second \
-    python scripts/benchmark_mcts.py
-```
-
-**Metrics to collect**:
-- Total games/hour
-- MCTS simulations/second
-- Kernel execution time (select, expand, backup)
-- Inference time (policy, value)
-- Memory transfer overhead
-- GPU utilization
-
-#### 4.3 Kernel Optimization (Days 51-54)
-**Deliverable**: Tuned CUDA kernels
-
-**Optimizations**:
-
-1. **Coalesced Memory Access**:
-```cuda
-// Bad: Strided access
-for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    output[i * stride] = input[i * stride];  // Uncoalesced
-}
-
-// Good: Sequential access
-for (int i = threadIdx.x; i < n; i += blockDim.x) {
-    output[i] = input[i];  // Coalesced
-}
-```
-
-2. **Shared Memory for Hot Data**:
-```cuda
-__global__ void select_leaf_optimized(...) {
-    __shared__ MCTSNode current_node;
-    __shared__ float ucb_scores[MAX_CHILDREN];
-
-    // Load current node to shared memory
-    if (threadIdx.x == 0) {
-        current_node = nodes[current_idx];
-    }
-    __syncthreads();
-
-    // Parallel UCB computation
-    int child_idx = current_node.first_child_idx + threadIdx.x;
-    if (threadIdx.x < current_node.num_children) {
-        ucb_scores[threadIdx.x] = compute_ucb1(nodes[child_idx], ...);
-    }
-    __syncthreads();
-
-    // Reduction to find max
-    // ...
-}
-```
-
-3. **Warp-Level Primitives**:
-```cuda
-// Find max UCB across warp
-__device__ float warp_reduce_max(float val) {
-    for (int offset = 16; offset > 0; offset /= 2) {
-        val = fmaxf(val, __shfl_down_sync(0xffffffff, val, offset));
-    }
-    return val;
-}
-```
-
-#### 4.4 TGN Writer (Days 55-56)
+#### 4.3 TGN Writer (Days 49-50)
 **Deliverable**: Output formatting with hash-based filenames
 
-```cpp
-class TGNWriter {
-public:
-    // Write games to directory
-    void write_games(
-        const std::vector<std::string>& tgn_strings,
-        const std::string& output_dir
-    );
+#### 4.4 Comprehensive Validation Suite (Days 51-54)
+**Deliverable**: Validation against TypeScript golden reference
 
-private:
-    // Generate filename from content hash
-    std::string hash_filename(const std::string& tgn);
-};
-```
+#### 4.5 End-to-End Testing (Days 55-56)
+**Deliverable**: Generate 1000 games, validate all
 
-**Implementation**:
-```cpp
-std::string TGNWriter::hash_filename(const std::string& tgn) {
-    // SHA-256 hash
-    unsigned char hash[SHA256_DIGEST_LENGTH];
-    SHA256((unsigned char*)tgn.c_str(), tgn.length(), hash);
-
-    // Convert to hex (first 16 chars)
-    std::ostringstream ss;
-    ss << "game_";
-    for (int i = 0; i < 8; i++) {
-        ss << std::hex << std::setw(2) << std::setfill('0')
-           << (int)hash[i];
-    }
-    ss << ".tgn";
-
-    return ss.str();
-}
-```
-
-### Validation (Phase 4)
-
-```bash
-# Run full validation suite
-python tools/validate_mcts.py
-
-# Expected output:
-# Testing (3, 3, 1) with seed 42...
-#   Validating game 1/10... ✓
-#   ...
-# ✓ All 10 games valid
-#
-# Testing (5, 5, 1) with seed 123...
-#   ...
-#
-# ✓ ALL TESTS PASSED
-```
-
-**Phase 4 Complete**: Validated system hitting 300+ games/hour
+**Phase 4 Complete**: Full system generating validated games
 
 ---
 
-## Phase 5: Production Integration (Weeks 9-10)
+## Phase 5: Optimization & Production (Weeks 9-10)
 
-### Goal
-Full AlphaZero training loop integrated with TrigoRL.
+**Goal**: Performance optimization and production deployment
 
 ### Tasks
 
-#### 5.1 Python Scripts (Days 57-59)
+#### 5.1 Performance Profiling (Days 57-59)
+**Deliverable**: Bottleneck analysis with nvprof/nsys
+
+#### 5.2 Kernel Optimization (Days 60-63)
+**Deliverable**: Tuned CUDA kernels
+
+#### 5.3 Python Scripts (Days 64-66)
 **Deliverable**: User-facing scripts
 
 ```python
 # scripts/generate_selfplay_cuda.py
-import argparse
-import torch
 import cuda_mcts
-from pathlib import Path
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--policy", required=True)
-    parser.add_argument("--value", required=True)
-    parser.add_argument("--output", default="data/selfplay")
-    parser.add_argument("--games", type=int, default=1000)
-    parser.add_argument("--parallel", type=int, default=8)
-    parser.add_argument("--simulations", type=int, default=800)
-    args = parser.parse_args()
+engine = cuda_mcts.CudaMCTSSelfPlay(
+    base_model="models/shared/base_model.onnx",
+    policy_head="models/shared/policy_head.onnx",
+    value_head="models/shared/value_head.onnx",
+    num_parallel_games=8,
+    mcts_simulations=800
+)
 
-    # Load models
-    policy = torch.jit.load(args.policy)
-    value = torch.jit.load(args.value)
-
-    # Create engine
-    engine = cuda_mcts.CudaMCTSSelfPlay(
-        policy, value,
-        num_parallel_games=args.parallel,
-        mcts_simulations=args.simulations
-    )
-
-    # Generate games
-    board_shapes = [(3,3,1), (5,5,1), (2,2,2), (3,3,3)]
-    tgn_games = engine.generate_games(
-        args.games, board_shapes,
-        progress_callback=lambda cur, tot, rate:
-            print(f"\r[{cur}/{tot}] {rate:.1f} games/sec", end="")
-    )
-
-    # Save
-    output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for tgn in tgn_games:
-        filename = hash_filename(tgn)
-        (output_dir / filename).write_text(tgn)
-
-    print(f"\n✓ Saved {len(tgn_games)} games to {output_dir}")
-
-if __name__ == "__main__":
-    main()
+tgn_games = engine.generate_games(
+    num_games=1000,
+    board_shapes=[(3,3,1), (5,5,1), (2,2,2), (3,3,3)]
+)
 ```
 
-#### 5.2 AlphaZero Training Loop (Days 60-62)
+#### 5.4 AlphaZero Training Loop (Days 67-68)
 **Deliverable**: End-to-end training script
 
-```python
-# scripts/alphazero_training_loop.py
-import torch
-import cuda_mcts
-from pathlib import Path
-from trigor.training import LMTrainer
-from trigor.data import TGNValueDataset, get_tokenizer
-from trigor.models import ValueCausalLoss
-import hydra
-from omegaconf import DictConfig
-
-@hydra.main(config_path="../configs", config_name="alphazero")
-def main(cfg: DictConfig):
-    for iteration in range(cfg.num_iterations):
-        print(f"\n{'='*80}")
-        print(f"Iteration {iteration}")
-        print(f"{'='*80}")
-
-        # Step 1: Self-play with current model
-        print("\n[1/4] Generating self-play games...")
-        policy = torch.jit.load(
-            f"checkpoints/iter{iteration}_policy.pt"
-        )
-        value = torch.jit.load(
-            f"checkpoints/iter{iteration}_value.pt"
-        )
-
-        engine = cuda_mcts.CudaMCTSSelfPlay(
-            policy, value,
-            num_parallel_games=cfg.num_parallel_games,
-            mcts_simulations=cfg.mcts_simulations,
-            c_puct=cfg.c_puct,
-            temperature=cfg.temperature
-        )
-
-        tgn_games = engine.generate_games(
-            num_games=cfg.games_per_iteration,
-            board_shapes=cfg.board_shapes
-        )
-
-        # Step 2: Save TGN files
-        print(f"\n[2/4] Saving {len(tgn_games)} games...")
-        output_dir = Path(f"data/iter{iteration}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        for i, tgn in enumerate(tgn_games):
-            (output_dir / f"game_{i:06d}.tgn").write_text(tgn)
-
-        # Step 3: Train on new data
-        print(f"\n[3/4] Training on new data...")
-        tokenizer = get_tokenizer()
-        dataset = TGNValueDataset(
-            data_dir=str(output_dir),
-            tokenizer=tokenizer,
-            max_length=cfg.max_seq_len
-        )
-
-        model = ValueCausalLoss.from_config(cfg.model)
-        trainer = LMTrainer(cfg, model, dataset)
-        trainer.train(num_epochs=cfg.epochs_per_iteration)
-
-        # Step 4: Export for next iteration
-        print(f"\n[4/4] Exporting models...")
-        export_to_torchscript(
-            trainer.model,
-            f"checkpoints/iter{iteration+1}_policy.pt",
-            f"checkpoints/iter{iteration+1}_value.pt"
-        )
-
-        print(f"\n✓ Iteration {iteration} complete")
-
-    print(f"\n{'='*80}")
-    print(f"AlphaZero training complete!")
-    print(f"{'='*80}")
-
-def export_to_torchscript(model, policy_path, value_path):
-    """Export TreeLM and EvaluationLM to TorchScript"""
-    from trigor.models import TreeLM, EvaluationLM
-
-    # Export TreeLM (policy)
-    tree_lm = TreeLM(model.model)
-    tree_lm.eval()
-    traced_policy = torch.jit.trace(tree_lm, ...)
-    traced_policy.save(policy_path)
-
-    # Export EvaluationLM (value)
-    eval_lm = EvaluationLM(model)
-    eval_lm.eval()
-    traced_value = torch.jit.trace(eval_lm, ...)
-    traced_value.save(value_path)
-
-if __name__ == "__main__":
-    main()
-```
-
-#### 5.3 Documentation (Days 63-66)
-**Deliverable**: Complete documentation
-
-Files to create:
-- `docs/API.md` - Python and C++ API reference
-- `docs/ARCHITECTURE.md` - Technical design details
-- `docs/PORTING.md` - TypeScript → C++ notes
-- `docs/PERFORMANCE.md` - Optimization guide
-- `docs/TROUBLESHOOTING.md` - Common issues
-
-#### 5.4 Benchmarking (Days 67-68)
-**Deliverable**: Performance report
-
-```python
-# scripts/benchmark.py
-def benchmark_throughput():
-    """Measure games/hour"""
-    engine = cuda_mcts.CudaMCTSSelfPlay(...)
-
-    start = time.time()
-    tgn_games = engine.generate_games(num_games=100, ...)
-    elapsed = time.time() - start
-
-    throughput = len(tgn_games) / elapsed * 3600
-    print(f"Throughput: {throughput:.1f} games/hour")
-
-def benchmark_scaling():
-    """Test parallel scaling"""
-    for num_parallel in [1, 2, 4, 8]:
-        engine = cuda_mcts.CudaMCTSSelfPlay(
-            ..., num_parallel_games=num_parallel
-        )
-        # Measure throughput
-```
-
-#### 5.5 Production Deployment (Days 69-70)
+#### 5.5 Documentation & Deployment (Days 69-70)
 **Deliverable**: Production-ready system
-
-- Error handling and logging
-- Configuration management
-- Resource monitoring
-- Graceful shutdown
-- Documentation updates
-
-### Validation (Phase 5)
-
-```bash
-# Run full AlphaZero iteration
-python scripts/alphazero_training_loop.py \
-    --config configs/alphazero.yaml
-
-# Expected: Complete iteration in < 2 hours
-```
 
 **Phase 5 Complete**: Full AlphaZero training loop operational
 
@@ -1306,7 +1048,7 @@ python scripts/alphazero_training_loop.py \
 - ✅ Achieve 300-1000 games/hour on single GPU
 - ✅ MCTS 1000-5000 simulations/second
 - ✅ GPU utilization > 80%
-- ✅ Memory usage < 2GB
+- ✅ Memory usage < 1.5GB
 
 ### Integration
 - ✅ Works in AlphaZero training loop
@@ -1321,10 +1063,10 @@ python scripts/alphazero_training_loop.py \
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Game logic bugs | HIGH | Extensive validation vs TypeScript, unit tests |
+| ONNX model export issues | MEDIUM | Test early, validate against Python inference |
 | GPU memory overflow | MEDIUM | Dynamic node pools, monitoring, degradation |
-| Performance < target | MEDIUM | Profiling, kernel optimization, batching |
-| Prefix tree bugs | HIGH | Test with TypeScript golden outputs |
-| Training instability | LOW | Use proven model architectures |
+| Performance < target | MEDIUM | Profiling, kernel optimization, shared model helps |
+| Inference bottleneck | HIGH | Batching, CUDA streams, shared base model |
 
 ---
 
@@ -1355,10 +1097,16 @@ python scripts/alphazero_training_loop.py \
 **Phase 0: Planning** ✅ COMPLETE
 - Architecture designed
 - Feasibility confirmed
-- Critical files identified
-- Performance targets set
+- Research completed (ONNX Runtime vs llama.cpp)
+- Shared model approach validated
 
-**Next**: Begin Phase 1 - Core Infrastructure
+**Phase 1: Model Inference** ⬅️ **CURRENT**
+- Starting implementation
+- Build system setup next
+- Export shared model architecture
+- Implement inference pipeline
+
+**Timeline**: On track for 10-week completion
 
 ---
 
@@ -1373,12 +1121,18 @@ python scripts/alphazero_training_loop.py \
 4. `trigoRL/trigor/models/treeLM.py`
 5. `trigoRL/trigor/models/evaluationLM.py`
 6. `trigoRL/trigor/data/tgn_value_dataset.py`
+7. `trigoRL/exportOnnx.py` (to be modified)
 
 ### Validation Reference
-7. `trigoRL/third_party/trigo/trigo-web/tools/selfPlayGames.ts`
+8. `trigoRL/third_party/trigo/trigo-web/tools/selfPlayGames.ts`
+
+### Research Documents
+9. `docs/research/LLAMA_CPP_ANALYSIS.md` - Detailed comparison and architecture decisions
+10. `docs/research/MODEL_INFERENCE.md` - Existing infrastructure analysis
+11. `docs/research/CUDA_INFERENCE.md` - ONNX Runtime CUDA guide
 
 ---
 
+**Updated**: December 2025
+**Next Phase**: Model Inference Implementation (Phase 1)
 **Estimated Timeline**: 10 weeks to production-ready system
-**Team**: 1-2 developers
-**Hardware**: CUDA-capable GPU (RTX 2060+)
