@@ -43,9 +43,9 @@ set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} -O3")
 
 # Source files (will be added as we implement)
 set(TRIGO_INFERENCE_SOURCES
+    src/tgn_tokenizer.cpp
     # src/shared_model_inferencer.cpp
     # src/prefix_tree_builder.cpp
-    # src/tgn_tokenizer.cpp
 )
 
 # CUDA source files
@@ -55,21 +55,21 @@ set(TRIGO_CUDA_SOURCES
     # kernels/mcts_backup.cu
 )
 
-# Core inference library (placeholder for now)
-# add_library(trigo_inference SHARED
-#     ${TRIGO_INFERENCE_SOURCES}
-#     ${TRIGO_CUDA_SOURCES}
-# )
-#
-# target_link_libraries(trigo_inference PRIVATE
-#     ${ONNXRUNTIME_LIB}
-#     CUDA::cudart
-# )
-#
-# target_include_directories(trigo_inference PUBLIC
-#     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-#     $<INSTALL_INTERFACE:include>
-# )
+# Core inference library
+add_library(trigo_inference SHARED
+    ${TRIGO_INFERENCE_SOURCES}
+    ${TRIGO_CUDA_SOURCES}
+)
+
+target_link_libraries(trigo_inference PRIVATE
+    ${ONNXRUNTIME_LIB}
+    CUDA::cudart
+)
+
+target_include_directories(trigo_inference PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
 
 # Test executable for ONNX Runtime verification
 add_executable(test_onnxruntime_cuda tests/test_onnxruntime_cuda.cpp)
@@ -83,6 +83,10 @@ set_target_properties(test_onnxruntime_cuda PROPERTIES
     BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
     INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
+
+# Test executable for TGN tokenizer
+add_executable(test_tgn_tokenizer tests/test_tgn_tokenizer.cpp)
+target_link_libraries(test_tgn_tokenizer PRIVATE trigo_inference)
 
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
