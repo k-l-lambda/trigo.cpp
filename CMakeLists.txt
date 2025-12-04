@@ -120,9 +120,18 @@ add_executable(test_trigo_coords tests/test_trigo_coords.cpp)
 add_executable(test_trigo_game_utils tests/test_trigo_game_utils.cpp)
 # Header-only test, no library linking needed
 
+# Game library with core game engine
+add_library(trigo_game STATIC
+    src/trigo_game.cpp
+)
+
 # Test executable for game replay (cross-language validation)
 add_executable(test_game_replay tests/test_game_replay.cpp)
 # Header-only test, no library linking needed
+
+# Test executable for TrigoGame class
+add_executable(test_trigo_game tests/test_trigo_game.cpp)
+target_link_libraries(test_trigo_game PRIVATE trigo_game)
 
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
