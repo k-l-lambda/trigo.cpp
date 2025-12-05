@@ -726,34 +726,120 @@ if __name__ == "__main__":
 
 ---
 
-## Phase 2: Core Game Engine (Weeks 3-4)
+## Phase 2: Core Game Engine (Weeks 3-4) ✅ COMPLETE
 
 **Goal**: Complete Trigo game engine in C++
 
-**Note**: This is the original "Phase 1" content, now moved to Phase 2 since we're starting with inference.
+**Status**: Core components implemented and validated
 
-### Tasks
+### Completed Tasks
 
-#### 2.1 TrigoGame Class (Days 15-20)
+#### 2.1 TrigoGame Class ✅ COMPLETE
 **Deliverable**: Complete Trigo game engine in C++
 
 **Port from TypeScript**:
 - Source: `trigoRL/third_party/trigo/trigo-web/inc/trigo/game.ts` (800 lines)
-- Target: `include/game_state.hpp` + `src/game_state.cpp`
+- Target: `include/trigo_game.hpp` + related files
 
-**Core data structures**:
+**Implemented Components**:
+- ✅ `include/trigo_types.hpp` (214 lines) - Core types (Stone, Position, Step, GameResult, etc.)
+- ✅ `include/trigo_coords.hpp` (194 lines) - ab0yz coordinate encoding/decoding
+- ✅ `include/trigo_game_utils.hpp` (706 lines) - Game rules (capture, Ko, suicide, territory)
+- ✅ `include/trigo_game.hpp` - Complete TrigoGame class
+- ✅ Cross-language validation: 100/100 games validated against TypeScript
+- ✅ Python bindings via pybind11
+- ✅ OpenAI Gym environment wrapper
+
+#### 2.2 Self-Play Data Generation ✅ COMPLETE
+**Deliverable**: Offline training data generation system
+
+**Implemented Components**:
+- ✅ `include/self_play_policy.hpp` (230 lines) - Extensible policy interface
+  - RandomPolicy (baseline with 5% pass probability)
+  - NeuralPolicy placeholder (ONNX + online IPC support planned)
+  - MCTSPolicy placeholder
+  - HybridPolicy placeholder
+- ✅ `include/game_recorder.hpp` (276 lines) - TGN export with minimal headers
+  - Only `[Board 5x5x5]` header (no Event/Site/Date/Black/White to avoid training data leakage)
+  - Proper ab0yz coordinate encoding
+  - Score comment at end
+- ✅ `src/self_play_generator.cpp` (254 lines) - Command-line self-play generator
+  - Configurable board size, policies, output directory
+  - Progress logging and statistics
+  - Performance: 3.33 games/sec baseline (random policy)
+
+**Command-Line Interface**:
+```bash
+./self_play_generator --num-games 1000 --board 5x5x5 \
+    --black-policy random --white-policy random \
+    --output /path/to/data --seed 42
+```
+
+**TGN Output Format** (minimal headers for training):
+```tgn
+[Board 5x5x5]
+
+1. yby 0yy
+2. 0aa zyz
+3. 00z Pass
+...
+; -1
+```
+
+#### 2.3 Python Integration ✅ COMPLETE
+**Deliverable**: Python training pipeline integration
+
+**Validated Components**:
+- ✅ TGNDataset loads C++ generated .tgn files directly
+- ✅ TGNByteTokenizer (128-token vocabulary) compatible
+- ✅ Deterministic train/val splitting (hash-based)
+- ✅ End-to-end training tested (loss decreasing normally)
+- ✅ Configuration system ready (Hydra + wandb)
+
+**Test Results**:
+```
+✓ 20 TGN files loaded successfully
+✓ Tokenization: 872 tokens from 870 chars
+✓ Train/val split: 17/3 files, no overlap
+✓ Training: 544K params, loss 4.80 → 4.10
+✓ Validation: loss ~4.01, no NaN
+```
+
+#### 2.4 Validation Tests ✅ COMPLETE
+**Deliverable**: Cross-language validation and testing
+
+**Tests Implemented**:
+- ✅ `tests/test_trigo_coords.cpp` - ab0yz coordinate encoding
+- ✅ `tests/test_trigo_game_utils.cpp` - Capture, Ko, territory calculation
+- ✅ `tests/test_trigo_game.cpp` - Complete game engine
+- ✅ `tests/test_game_replay.cpp` - JSON game replay (100/100 validation)
+- ✅ Python integration tests (dataset loading, training pipeline)
+
+**Python Validation**:
+- ✅ `trigoRL/tests/test_dataset_loading.py` - TGN loading from C++
+- ✅ `trigoRL/tests/test_training_pipeline.py` - End-to-end training
+
+**Phase 2 Complete**: C++ game engine + self-play data generation + Python training integration
+
+**Performance Summary**:
+- Game engine: Validated against TypeScript (100/100 games)
+- Self-play generation: 3.33 games/sec (random policy baseline)
+- Training pipeline: Working end-to-end with decreasing loss
+- Architecture: Extensible for future ONNX/MCTS policies
+
+---
+
+## Phase 2 (Original): Basic MCTS (CPU) - NOT STARTED
+
+**Note**: Original Phase 2 Tasks 2.2-2.4 moved here for future implementation
+
+### Tasks (Deferred)
+
+#### 2.2 Basic MCTS (CPU) (Days 21-24) - DEFERRED
+**Deliverable**: CPU-only MCTS that generates games
+
 ```cpp
-struct Position {
-    int16_t x, y, z;
-};
-
-struct Move {
-    int16_t x, y, z;
-    int8_t type;    // 0=place, 1=pass
-    int8_t player;  // 1=black, 2=white
-};
-
-class TrigoGame {
+struct MCTSNode {
 public:
     // Constructor
     TrigoGame(int x, int y, int z);
@@ -1092,7 +1178,14 @@ tgn_games = engine.generate_games(
 
 ---
 
-## Current Status
+## Current Status (Updated December 5, 2025)
+
+**Project Scope Clarification**:
+- **trigo.cpp**: Data generation tools (game engine + self-play generator)
+- **trigoRL**: Training, ONNX export, Python inference (separate project)
+- **Focus**: MCTS-based data generation, not training infrastructure
+
+---
 
 **Phase 0: Planning** ✅ COMPLETE
 - Architecture designed
@@ -1100,13 +1193,73 @@ tgn_games = engine.generate_games(
 - Research completed (ONNX Runtime vs llama.cpp)
 - Shared model approach validated
 
-**Phase 1: Model Inference** ⬅️ **CURRENT**
-- Starting implementation
-- Build system setup next
-- Export shared model architecture
-- Implement inference pipeline
+**Phase 1: Model Inference** ⚠️ **PARTIALLY COMPLETE**
 
-**Timeline**: On track for 10-week completion
+**Status**:
+- ✅ SharedModelInferencer implemented (shared_model_inferencer.cpp, 14KB)
+- ✅ ONNX Runtime integration working
+- ✅ Test models can be loaded and run
+- ✅ Trained ONNX models available:
+  - `/home/camus/work/trigoRL/outputs/trigor/20251204-trigo-value-gpt2-l6-h64-251125-lr500/`
+  - `GPT2CausalLM_ep0019_tree.onnx` (3.5MB)
+  - `GPT2CausalLM_ep0019_evaluation.onnx` (3.5MB)
+
+**Blockers for MCTS Development**:
+1. ❌ **NeuralPolicy not implemented** (HIGHEST PRIORITY)
+   - Need to connect SharedModelInferencer to IPolicy interface
+   - Need to convert TrigoGame state → model input tensors
+   - Need to convert model output logits → action probabilities
+
+2. ⚠️ **Model format mismatch** (MEDIUM PRIORITY)
+   - Test uses: base_model.onnx + policy_head.onnx + value_head.onnx (3-model split)
+   - Available: tree.onnx + evaluation.onnx (2-model monolithic)
+   - Need to verify which format is correct and update code accordingly
+
+3. ❓ **PrefixTreeBuilder may be needed** (UNKNOWN)
+   - If tree.onnx requires tree attention mask, must implement PrefixTreeBuilder
+   - Current status: header exists but implementation incomplete
+
+**Next Steps**:
+1. Verify trained ONNX models can be loaded by SharedModelInferencer
+2. Implement NeuralPolicy class (self_play_policy.hpp)
+3. Test NeuralPolicy with self_play_generator
+4. Implement MCTS algorithm (once NeuralPolicy works)
+
+**Phase 2: Core Game Engine** ✅ COMPLETE (December 2025)
+- ✅ TrigoGame class (types, coords, game utils, full engine)
+- ✅ Self-play data generation (policy interface, game recorder, generator)
+- ✅ Python integration (dataset loading, training pipeline)
+- ✅ Cross-language validation (100/100 games)
+- ✅ Performance baseline: 3.33 games/sec (random policy)
+- ✅ TGN export with minimal headers (no training data leakage)
+
+**Phase 3: MCTS Algorithm** ⬅️ **NEXT MAJOR MILESTONE**
+
+**Dependencies**:
+- Requires NeuralPolicy (Phase 1 blocker #1)
+- Requires working model inference
+
+**Components to Implement**:
+- ❌ MCTSNode structure (tree representation)
+- ❌ UCB1 selection (tree traversal)
+- ❌ Tree expansion (add children)
+- ❌ Backpropagation (update values)
+- ❌ Root move selection (with temperature)
+
+**Expected Performance**:
+- CPU MCTS: 5-10 games/sec (vs 3.33 random)
+- GPU MCTS (future): 50+ games/sec
+
+**Phase 4: GPU Acceleration** - FUTURE
+- CUDA kernels for parallel tree operations
+- Batched neural network inference
+- Target: 50-100 games/sec
+
+**Timeline**:
+- Phase 2: ✅ Complete
+- Phase 1: ⚠️ Blocked on NeuralPolicy
+- Phase 3 (MCTS): Waiting for Phase 1
+- Phase 4 (GPU): Future work
 
 ---
 
