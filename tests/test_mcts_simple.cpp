@@ -7,7 +7,7 @@
 // Enable MCTS profiling for this test
 #define MCTS_ENABLE_PROFILING
 
-#include "../include/mcts.hpp"
+#include "../include/mcts_moc.hpp"
 #include "../include/trigo_game.hpp"
 #include <iostream>
 #include <chrono>
@@ -17,7 +17,7 @@ using namespace trigo;
 
 int main()
 {
-	std::cout << "\n=== MCTS Simple Debug Test ===\n\n";
+	std::cout << "\n=== PureMCTS Simple Debug Test ===\n\n";
 
 	// Create a simple game state
 	TrigoGame game(BoardShape{5, 5, 5});
@@ -30,11 +30,11 @@ int main()
 	auto valid_moves = game.valid_move_positions();
 	std::cout << "Valid moves: " << valid_moves.size() << "\n\n";
 
-	// Create MCTS with VERY few simulations
-	std::cout << "Creating MCTS with 5 simulations...\n";
-	MCTS mcts(5, 1.414f, 42);
+	// Create PureMCTS with VERY few simulations
+	std::cout << "Creating PureMCTS with 5 simulations...\n";
+	PureMCTS mcts(5, 1.414f, 42);
 
-	std::cout << "Starting MCTS search...\n";
+	std::cout << "Starting PureMCTS search...\n";
 	auto start = std::chrono::steady_clock::now();
 
 	// Run search

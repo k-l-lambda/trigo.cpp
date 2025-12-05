@@ -3,7 +3,7 @@
  */
 
 #include "../include/trigo_game.hpp"
-#include "../include/mcts.hpp"
+#include "../include/mcts_moc.hpp"
 #include <iostream>
 
 using namespace trigo;
@@ -11,7 +11,7 @@ using namespace trigo;
 
 int main()
 {
-	std::cout << "\n=== MCTS Test ===\n\n";
+	std::cout << "\n=== PureMCTS Test ===\n\n";
 
 	// Create simple 5x5x5 game
 	TrigoGame game(BoardShape{5, 5, 5});
@@ -21,9 +21,9 @@ int main()
 	std::cout << "Current player: " << (game.get_current_player() == Stone::Black ? "Black" : "White") << "\n\n";
 
 	// Test with small number of simulations
-	MCTS mcts_engine(50, 1.414f, 42);  // Only 50 simulations for test
+	PureMCTS mcts_engine(50, 1.414f, 42);  // Only 50 simulations for test
 
-	std::cout << "Running MCTS search (50 simulations)...\n";
+	std::cout << "Running PureMCTS search (50 simulations)...\n";
 	auto action = mcts_engine.search(game);
 
 	std::cout << "MCTS selected action:\n";

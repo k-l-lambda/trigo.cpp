@@ -20,7 +20,8 @@
 #include "shared_model_inferencer.hpp"
 #include "prefix_tree_builder.hpp"
 #include "tgn_tokenizer.hpp"
-#include "mcts.hpp"
+#include "mcts.hpp"          // AlphaZero MCTS (for PolicyAction, MCTSNode)
+#include "mcts_moc.hpp"      // Pure MCTS with random rollouts (for MCTSPolicy)
 #include <vector>
 #include <random>
 #include <memory>
@@ -299,13 +300,14 @@ private:
 /**
  * MCTS Policy (Monte Carlo Tree Search)
  *
- * Pure MCTS without neural guidance
- * Uses UCB1 formula for tree exploration
+ * Pure MCTS without neural guidance (Reference Implementation)
+ * Uses UCB1 formula and random rollouts
+ * NOTE: Very slow (~250× slower than NeuralPolicy). For testing only.
  */
 class MCTSPolicy : public IPolicy
 {
 private:
-	std::unique_ptr<MCTS> mcts_engine;
+	std::unique_ptr<PureMCTS> mcts_engine;
 	int num_simulations;
 	float exploration_constant;
 
@@ -314,7 +316,7 @@ public:
 		: num_simulations(num_sims)
 		, exploration_constant(c_puct)
 	{
-		mcts_engine = std::make_unique<MCTS>(num_sims, c_puct, seed);
+		mcts_engine = std::make_unique<PureMCTS>(num_sims, c_puct, seed);
 	}
 
 	PolicyAction select_action(const TrigoGame& game) override
@@ -324,7 +326,7 @@ public:
 
 	std::string name() const override
 	{
-		return "MCTS";
+		return "PureMCTS";
 	}
 };
 

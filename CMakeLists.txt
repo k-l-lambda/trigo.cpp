@@ -156,11 +156,40 @@ add_executable(test_prefix_tree_builder tests/test_prefix_tree_builder.cpp src/p
 
 # Test MCTS implementation
 add_executable(test_mcts tests/test_mcts.cpp)
-target_link_libraries(test_mcts PRIVATE trigo_game)
+target_link_libraries(test_mcts PRIVATE
+	trigo_game
+	${ONNXRUNTIME_LIB}
+	CUDA::cudart
+)
+set_target_properties(test_mcts PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
 
 # Simple MCTS debug test
 add_executable(test_mcts_simple tests/test_mcts_simple.cpp)
-target_link_libraries(test_mcts_simple PRIVATE trigo_game)
+target_link_libraries(test_mcts_simple PRIVATE
+	trigo_game
+	${ONNXRUNTIME_LIB}
+	CUDA::cudart
+)
+set_target_properties(test_mcts_simple PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# AlphaZero MCTS test
+add_executable(test_alphazero_mcts tests/test_alphazero_mcts.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_alphazero_mcts PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+	CUDA::cudart
+)
+set_target_properties(test_alphazero_mcts PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
 
 # Test NeuralPolicy full inference
 add_executable(test_neural_policy_inference tests/test_neural_policy_inference.cpp src/prefix_tree_builder.cpp)
