@@ -350,12 +350,31 @@ public:
 	AlphaZeroPolicy(const std::string& model_path, int num_sims = 50, int seed = 42)
 		: num_simulations(num_sims)
 	{
-		// Load ONNX models
-		inferencer = std::make_shared<SharedModelInferencer>(
-			model_path + "/base_model.onnx",
-			model_path + "/policy_head.onnx",
-			model_path + "/value_head.onnx"
-		);
+		// Try GPU first, fallback to CPU if GPU initialization fails
+		bool use_gpu = true;
+		try
+		{
+			inferencer = std::make_shared<SharedModelInferencer>(
+				model_path + "/base_model.onnx",
+				model_path + "/policy_head.onnx",
+				model_path + "/value_head.onnx",
+				use_gpu
+			);
+		}
+		catch (const std::exception& e)
+		{
+			std::cerr << "Warning: GPU initialization failed (" << e.what() << ")" << std::endl;
+			std::cerr << "Falling back to CPU" << std::endl;
+
+			// Retry with CPU only
+			use_gpu = false;
+			inferencer = std::make_shared<SharedModelInferencer>(
+				model_path + "/base_model.onnx",
+				model_path + "/policy_head.onnx",
+				model_path + "/value_head.onnx",
+				use_gpu
+			);
+		}
 
 		// Create MCTS with value network
 		mcts_engine = std::make_unique<MCTS>(inferencer, num_sims, 1.0f, seed);

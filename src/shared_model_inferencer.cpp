@@ -23,6 +23,14 @@ SharedModelInferencer::SharedModelInferencer(
 	  use_gpu_(use_gpu),
 	  device_id_(device_id)
 {
+	// Check environment variable to force CPU
+	const char* force_cpu = std::getenv("TRIGO_FORCE_CPU");
+	if (force_cpu != nullptr && std::string(force_cpu) == "1")
+	{
+		use_gpu_ = false;
+		std::cout << "✓ TRIGO_FORCE_CPU=1 detected, using CPU execution provider" << std::endl;
+	}
+
 	// Configure session options
 	session_options_.SetIntraOpNumThreads(4);
 	session_options_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_EXTENDED);

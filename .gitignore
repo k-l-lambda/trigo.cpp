@@ -51,6 +51,9 @@ build/
 *~
 .DS_Store
 
+*.local
+*.local.*
+
 # ONNX Runtime download
 onnxruntime-*.tgz
 onnxruntime-*.tar.gz
