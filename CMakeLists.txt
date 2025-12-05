@@ -1,20 +1,46 @@
 cmake_minimum_required(VERSION 3.18)
-project(trigo_cpp CUDA CXX)
+project(trigo_cpp CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CUDA_STANDARD 17)
-set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 
-# Find CUDA
-find_package(CUDA REQUIRED)
-find_package(CUDAToolkit REQUIRED)
+# Optional CUDA support
+option(USE_CUDA "Enable CUDA support" OFF)
+
+if(USE_CUDA)
+	enable_language(CUDA)
+	set(CMAKE_CUDA_STANDARD 17)
+	set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+	# Find CUDA
+	find_package(CUDA REQUIRED)
+	find_package(CUDAToolkit REQUIRED)
+
+	message(STATUS "CUDA support enabled")
+else()
+	message(STATUS "CUDA support disabled (CPU-only build)")
+endif()
 
 # ONNX Runtime configuration
-set(ONNXRUNTIME_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-gpu-1.17.0")
+if(USE_CUDA)
+	set(ONNXRUNTIME_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-gpu-1.17.0")
+else()
+	# Try multiple locations for CPU-only ONNX Runtime
+	set(ONNXRUNTIME_SEARCH_PATHS
+		"${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-1.17.0"
+		"/usr/local"
+		"/usr"
+	)
+	foreach(SEARCH_PATH ${ONNXRUNTIME_SEARCH_PATHS})
+		if(EXISTS "${SEARCH_PATH}/include/onnxruntime")
+			set(ONNXRUNTIME_ROOT_DIR "${SEARCH_PATH}")
+			break()
+		endif()
+	endforeach()
+endif()
 
-if(NOT EXISTS ${ONNXRUNTIME_ROOT_DIR})
-    message(FATAL_ERROR "ONNX Runtime not found at ${ONNXRUNTIME_ROOT_DIR}")
+if(NOT ONNXRUNTIME_ROOT_DIR)
+	message(FATAL_ERROR "ONNX Runtime not found. Please install or set ONNXRUNTIME_ROOT_DIR")
 endif()
 
 find_library(ONNXRUNTIME_LIB onnxruntime
@@ -28,18 +54,23 @@ message(STATUS "ONNX Runtime include: ${ONNXRUNTIME_ROOT_DIR}/include")
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${ONNXRUNTIME_ROOT_DIR}/include
-    ${CUDAToolkit_INCLUDE_DIRS}
 )
+
+if(USE_CUDA)
+	include_directories()
+endif()
 
 # Compiler flags
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -DNDEBUG")
 
-# CUDA flags
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_75")  # RTX 2060+, adjust as needed
-set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -g -G -O0")
-set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} -O3")
+# CUDA flags (only if CUDA is enabled)
+if(USE_CUDA)
+	set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_75")  # RTX 2060+, adjust as needed
+	set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -g -G -O0")
+	set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} -O3")
+endif()
 
 # Source files (will be added as we implement)
 set(TRIGO_INFERENCE_SOURCES
@@ -63,20 +94,28 @@ add_library(trigo_inference SHARED
 
 target_link_libraries(trigo_inference PRIVATE
     ${ONNXRUNTIME_LIB}
-    CUDA::cudart
 )
+if(USE_CUDA)
+	target_link_libraries(trigo_inference PRIVATE )
+endif()
 
 target_include_directories(trigo_inference PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
+# Helper function to link targets with optional CUDA
+function(link_with_onnxruntime target_name)
+	target_link_libraries(${target_name} PRIVATE ${ONNXRUNTIME_LIB})
+	if(USE_CUDA)
+		target_link_libraries(${target_name} PRIVATE )
+	endif()
+endfunction()
+
 # Test executable for ONNX Runtime verification
-add_executable(test_onnxruntime_cuda tests/test_onnxruntime_cuda.cpp)
-target_link_libraries(test_onnxruntime_cuda PRIVATE
-    ${ONNXRUNTIME_LIB}
-    CUDA::cudart
-)
+if(USE_CUDA)
+	add_executable(test_onnxruntime_cuda tests/test_onnxruntime_cuda.cpp)
+	link_with_onnxruntime(test_onnxruntime_cuda)
 
 # Set RPATH so executable can find ONNX Runtime library
 set_target_properties(test_onnxruntime_cuda PROPERTIES
@@ -93,7 +132,7 @@ add_executable(test_shared_model_inferencer tests/test_shared_model_inferencer.c
 target_link_libraries(test_shared_model_inferencer PRIVATE
     trigo_inference
     ${ONNXRUNTIME_LIB}
-    CUDA::cudart
+    
 )
 set_target_properties(test_shared_model_inferencer PROPERTIES
     BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -105,7 +144,7 @@ add_executable(test_inference_equivalence_cpp tests/test_inference_equivalence_c
 target_link_libraries(test_inference_equivalence_cpp PRIVATE
     trigo_inference
     ${ONNXRUNTIME_LIB}
-    CUDA::cudart
+    
 )
 set_target_properties(test_inference_equivalence_cpp PROPERTIES
     BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -139,7 +178,7 @@ target_link_libraries(self_play_generator PRIVATE
 	trigo_game
 	trigo_inference
 	${ONNXRUNTIME_LIB}
-	CUDA::cudart
+	
 )
 set_target_properties(self_play_generator PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -159,7 +198,7 @@ add_executable(test_mcts tests/test_mcts.cpp)
 target_link_libraries(test_mcts PRIVATE
 	trigo_game
 	${ONNXRUNTIME_LIB}
-	CUDA::cudart
+	
 )
 set_target_properties(test_mcts PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -171,7 +210,7 @@ add_executable(test_mcts_simple tests/test_mcts_simple.cpp)
 target_link_libraries(test_mcts_simple PRIVATE
 	trigo_game
 	${ONNXRUNTIME_LIB}
-	CUDA::cudart
+	
 )
 set_target_properties(test_mcts_simple PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -184,7 +223,7 @@ target_link_libraries(test_alphazero_mcts PRIVATE
 	trigo_game
 	trigo_inference
 	${ONNXRUNTIME_LIB}
-	CUDA::cudart
+	
 )
 set_target_properties(test_alphazero_mcts PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -197,7 +236,7 @@ target_link_libraries(test_neural_policy_inference PRIVATE
 	trigo_game
 	trigo_inference
 	${ONNXRUNTIME_LIB}
-	CUDA::cudart
+	
 )
 set_target_properties(test_neural_policy_inference PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
