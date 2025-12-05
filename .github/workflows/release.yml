@@ -88,3 +88,58 @@ jobs:
           For full release notes and performance analysis, see the tag description and [PERFORMANCE_ANALYSIS-1205.md](https://github.com/k-l-lambda/trigo.cpp/blob/main/docs/PERFORMANCE_ANALYSIS-1205.md).
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux-gpu:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install CUDA
+      uses: Jimver/cuda-toolkit@v0.2.14
+      with:
+        cuda: '12.3.2'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake g++ wget
+
+    - name: Download ONNX Runtime GPU
+      run: |
+        wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-gpu-1.17.0.tgz
+        tar -xzf onnxruntime-linux-x64-gpu-1.17.0.tgz
+
+    - name: Build project with CUDA
+      run: |
+        mkdir build
+        cd build
+        cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=ON -DONNXRUNTIME_ROOT_DIR=../onnxruntime-linux-x64-gpu-1.17.0 ..
+        make -j$(nproc)
+
+    - name: Package binaries
+      run: |
+        mkdir -p release/trigo.cpp-linux-x64-gpu
+        cp build/self_play_generator release/trigo.cpp-linux-x64-gpu/
+        cp build/test_* release/trigo.cpp-linux-x64-gpu/ 2>/dev/null || true
+        cp README.md release/trigo.cpp-linux-x64-gpu/
+        cp -r docs release/trigo.cpp-linux-x64-gpu/
+        # Include ONNX Runtime libraries
+        mkdir -p release/trigo.cpp-linux-x64-gpu/lib
+        cp onnxruntime-linux-x64-gpu-1.17.0/lib/* release/trigo.cpp-linux-x64-gpu/lib/
+        cd release
+        tar -czf trigo.cpp-linux-x64-gpu.tar.gz trigo.cpp-linux-x64-gpu/
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: trigo.cpp-linux-x64-gpu
+        path: release/trigo.cpp-linux-x64-gpu.tar.gz
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: release/trigo.cpp-linux-x64-gpu.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

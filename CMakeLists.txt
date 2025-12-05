@@ -96,7 +96,7 @@ target_link_libraries(trigo_inference PRIVATE
     ${ONNXRUNTIME_LIB}
 )
 if(USE_CUDA)
-	target_link_libraries(trigo_inference PRIVATE )
+	target_link_libraries(trigo_inference PRIVATE CUDA::cudart)
 endif()
 
 target_include_directories(trigo_inference PUBLIC
@@ -108,7 +108,7 @@ target_include_directories(trigo_inference PUBLIC
 function(link_with_onnxruntime target_name)
 	target_link_libraries(${target_name} PRIVATE ${ONNXRUNTIME_LIB})
 	if(USE_CUDA)
-		target_link_libraries(${target_name} PRIVATE )
+		target_link_libraries(${target_name} PRIVATE CUDA::cudart)
 	endif()
 endfunction()
 
@@ -117,11 +117,12 @@ if(USE_CUDA)
 	add_executable(test_onnxruntime_cuda tests/test_onnxruntime_cuda.cpp)
 	link_with_onnxruntime(test_onnxruntime_cuda)
 
-# Set RPATH so executable can find ONNX Runtime library
-set_target_properties(test_onnxruntime_cuda PROPERTIES
-    BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
-    INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
-)
+	# Set RPATH so executable can find ONNX Runtime library
+	set_target_properties(test_onnxruntime_cuda PROPERTIES
+		BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+		INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	)
+endif()
 
 # Test executable for TGN tokenizer
 add_executable(test_tgn_tokenizer tests/test_tgn_tokenizer.cpp)
@@ -132,8 +133,10 @@ add_executable(test_shared_model_inferencer tests/test_shared_model_inferencer.c
 target_link_libraries(test_shared_model_inferencer PRIVATE
     trigo_inference
     ${ONNXRUNTIME_LIB}
-    
 )
+if(USE_CUDA)
+	target_link_libraries(test_shared_model_inferencer PRIVATE CUDA::cudart)
+endif()
 set_target_properties(test_shared_model_inferencer PROPERTIES
     BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
     INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -144,8 +147,10 @@ add_executable(test_inference_equivalence_cpp tests/test_inference_equivalence_c
 target_link_libraries(test_inference_equivalence_cpp PRIVATE
     trigo_inference
     ${ONNXRUNTIME_LIB}
-    
 )
+if(USE_CUDA)
+	target_link_libraries(test_inference_equivalence_cpp PRIVATE CUDA::cudart)
+endif()
 set_target_properties(test_inference_equivalence_cpp PROPERTIES
     BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
     INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -178,8 +183,10 @@ target_link_libraries(self_play_generator PRIVATE
 	trigo_game
 	trigo_inference
 	${ONNXRUNTIME_LIB}
-	
 )
+if(USE_CUDA)
+	target_link_libraries(self_play_generator PRIVATE CUDA::cudart)
+endif()
 set_target_properties(self_play_generator PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -198,8 +205,10 @@ add_executable(test_mcts tests/test_mcts.cpp)
 target_link_libraries(test_mcts PRIVATE
 	trigo_game
 	${ONNXRUNTIME_LIB}
-	
 )
+if(USE_CUDA)
+	target_link_libraries(test_mcts PRIVATE CUDA::cudart)
+endif()
 set_target_properties(test_mcts PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -210,8 +219,10 @@ add_executable(test_mcts_simple tests/test_mcts_simple.cpp)
 target_link_libraries(test_mcts_simple PRIVATE
 	trigo_game
 	${ONNXRUNTIME_LIB}
-	
 )
+if(USE_CUDA)
+	target_link_libraries(test_mcts_simple PRIVATE CUDA::cudart)
+endif()
 set_target_properties(test_mcts_simple PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -223,8 +234,10 @@ target_link_libraries(test_alphazero_mcts PRIVATE
 	trigo_game
 	trigo_inference
 	${ONNXRUNTIME_LIB}
-	
 )
+if(USE_CUDA)
+	target_link_libraries(test_alphazero_mcts PRIVATE CUDA::cudart)
+endif()
 set_target_properties(test_alphazero_mcts PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
@@ -236,8 +249,10 @@ target_link_libraries(test_neural_policy_inference PRIVATE
 	trigo_game
 	trigo_inference
 	${ONNXRUNTIME_LIB}
-	
 )
+if(USE_CUDA)
+	target_link_libraries(test_neural_policy_inference PRIVATE CUDA::cudart)
+endif()
 set_target_properties(test_neural_policy_inference PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
