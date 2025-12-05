@@ -13,6 +13,7 @@
 #   --cpp-model PATH      C++ model path (default: ../models/trained_shared)
 #   --ts-dir PATH         TypeScript project directory
 #   --output-dir PATH     Output directory (default: /tmp/mcts_benchmark)
+#   --use-gpu             Enable GPU acceleration (default: CPU only)
 #   --help                Show this help
 
 set -e
@@ -29,7 +30,7 @@ CPP_MODEL_PATH="$PROJECT_ROOT/models/trained_shared"
 TS_PROJECT_DIR="/home/camus/work/trigo/trigo-web"
 OUTPUT_DIR="/tmp/mcts_benchmark_$(date +%Y%m%d_%H%M%S)"
 CPP_BUILD_DIR="$PROJECT_ROOT/build"
-USE_CPU_ONLY=0  # 0 = try GPU, 1 = force CPU
+USE_GPU=0  # 0 = CPU only (default), 1 = try GPU
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -57,6 +58,10 @@ while [[ $# -gt 0 ]]; do
 		--output-dir)
 			OUTPUT_DIR="$2"
 			shift 2
+			;;
+		--use-gpu)
+			USE_GPU=1
+			shift
 			;;
 		--help)
 			head -n 20 "$0" | grep "^#" | sed 's/^# //'
@@ -112,6 +117,7 @@ echo "  Board Shape:        $BOARD_SHAPE"
 echo "  Number of Games:    $NUM_GAMES"
 echo "  MCTS Simulations:   $NUM_SIMULATIONS"
 echo "  Output Directory:   $OUTPUT_DIR"
+echo "  GPU Acceleration:   $([ $USE_GPU -eq 1 ] && echo 'Enabled' || echo 'Disabled (CPU only)')"
 echo ""
 echo "C++ Configuration:"
 echo "  Build Directory:    $CPP_BUILD_DIR"
@@ -130,36 +136,58 @@ echo ""
 echo "[1/2] Running C++ AlphaZero MCTS..."
 echo "--------------------------------------------------------------"
 
-CPP_CMD="$CPP_BUILD_DIR/self_play_generator \
-	--num-games $NUM_GAMES \
-	--board $BOARD_SHAPE \
-	--black-policy alphazero \
-	--white-policy alphazero \
-	--model $CPP_MODEL_PATH \
-	--output $OUTPUT_DIR/cpp_output \
-	--seed 42"
-
-echo "Command: $CPP_CMD"
-echo ""
-
-# Run C++ benchmark
-CPP_START=$(date +%s.%N)
-if $CPP_CMD > "$OUTPUT_DIR/cpp_log.txt" 2>&1; then
-	CPP_END=$(date +%s.%N)
-	CPP_SUCCESS=1
-	echo "✓ C++ test completed successfully"
+# Build command based on GPU setting
+if [ $USE_GPU -eq 1 ]; then
+	echo "Command: $CPP_BUILD_DIR/self_play_generator --num-games $NUM_GAMES --board $BOARD_SHAPE --black-policy alphazero --white-policy alphazero --model $CPP_MODEL_PATH --output $OUTPUT_DIR/cpp_output --seed 42"
+	echo ""
+	# Run C++ benchmark with GPU
+	CPP_START=$(date +%s.%N)
+	if $CPP_BUILD_DIR/self_play_generator \
+		--num-games $NUM_GAMES \
+		--board $BOARD_SHAPE \
+		--black-policy alphazero \
+		--white-policy alphazero \
+		--model $CPP_MODEL_PATH \
+		--output $OUTPUT_DIR/cpp_output \
+		--seed 42 > "$OUTPUT_DIR/cpp_log.txt" 2>&1; then
+		CPP_END=$(date +%s.%N)
+		CPP_SUCCESS=1
+		echo "✓ C++ test completed successfully"
+	else
+		CPP_END=$(date +%s.%N)
+		CPP_SUCCESS=0
+		echo "✗ C++ test failed (check $OUTPUT_DIR/cpp_log.txt)"
+	fi
 else
-	CPP_END=$(date +%s.%N)
-	CPP_SUCCESS=0
-	echo "✗ C++ test failed (check $OUTPUT_DIR/cpp_log.txt)"
+	echo "Command: TRIGO_FORCE_CPU=1 $CPP_BUILD_DIR/self_play_generator --num-games $NUM_GAMES --board $BOARD_SHAPE --black-policy alphazero --white-policy alphazero --model $CPP_MODEL_PATH --output $OUTPUT_DIR/cpp_output --seed 42"
+	echo ""
+	# Run C++ benchmark with CPU
+	CPP_START=$(date +%s.%N)
+	if TRIGO_FORCE_CPU=1 $CPP_BUILD_DIR/self_play_generator \
+		--num-games $NUM_GAMES \
+		--board $BOARD_SHAPE \
+		--black-policy alphazero \
+		--white-policy alphazero \
+		--model $CPP_MODEL_PATH \
+		--output $OUTPUT_DIR/cpp_output \
+		--seed 42 > "$OUTPUT_DIR/cpp_log.txt" 2>&1; then
+		CPP_END=$(date +%s.%N)
+		CPP_SUCCESS=1
+		echo "✓ C++ test completed successfully"
+	else
+		CPP_END=$(date +%s.%N)
+		CPP_SUCCESS=0
+		echo "✗ C++ test failed (check $OUTPUT_DIR/cpp_log.txt)"
+	fi
+fi
 
-	# Check for common GPU issues
+# Check for common GPU issues (only if GPU was attempted)
+if [ $USE_GPU -eq 1 ] && [ $CPP_SUCCESS -eq 0 ]; then
 	if grep -q "libcublasLt.so.12" "$OUTPUT_DIR/cpp_log.txt"; then
 		echo ""
 		echo "NOTE: GPU library version mismatch detected."
 		echo "      System has CUDA 11.8, but ONNX Runtime 1.17.0 needs CUDA 12.x"
-		echo "      The C++ version will run on CPU (no GPU acceleration)"
-		echo "      This still provides ~4× speedup over TypeScript"
+		echo "      Try running without --use-gpu flag to use CPU mode"
 	fi
 fi
 
@@ -223,11 +251,19 @@ if [ $CPP_SUCCESS -eq 1 ]; then
 	fi
 
 	CPP_TIME_PER_GAME=$(echo "scale=2; $CPP_DURATION / $NUM_GAMES" | bc)
+
+	# Calculate time per move
+	if [ "$CPP_MOVES" != "N/A" ] && [ "$CPP_MOVES" != "0" ]; then
+		CPP_TIME_PER_MOVE=$(echo "scale=0; ($CPP_DURATION * 1000) / $CPP_MOVES" | bc)
+	else
+		CPP_TIME_PER_MOVE="N/A"
+	fi
 else
 	CPP_GAMES="FAILED"
 	CPP_MOVES="N/A"
 	CPP_AVG_MOVES="N/A"
 	CPP_TIME_PER_GAME="N/A"
+	CPP_TIME_PER_MOVE="N/A"
 fi
 
 # Parse TypeScript results
@@ -241,11 +277,19 @@ if [ $TS_SUCCESS -eq 1 ]; then
 	fi
 
 	TS_TIME_PER_GAME=$(echo "scale=2; $TS_DURATION / $NUM_GAMES" | bc)
+
+	# Calculate time per move
+	if [ "$TS_MOVES" != "N/A" ] && [ "$TS_MOVES" != "0" ]; then
+		TS_TIME_PER_MOVE=$(echo "scale=0; ($TS_DURATION * 1000) / $TS_MOVES" | bc)
+	else
+		TS_TIME_PER_MOVE="N/A"
+	fi
 else
 	TS_GAMES="FAILED"
 	TS_MOVES="N/A"
 	TS_AVG_MOVES="N/A"
 	TS_TIME_PER_GAME="N/A"
+	TS_TIME_PER_MOVE="N/A"
 fi
 
 # Calculate speedup
@@ -269,6 +313,7 @@ printf "%-25s | %-15s | %-15s\n" "Games Completed" "$CPP_GAMES" "$TS_GAMES"
 printf "%-25s | %-15s | %-15s\n" "Total Moves" "$CPP_MOVES" "$TS_MOVES"
 printf "%-25s | %-15s | %-15s\n" "Avg Moves per Game" "$CPP_AVG_MOVES" "$TS_AVG_MOVES"
 printf "%-25s | %-15s | %-15s\n" "Time per Game" "${CPP_TIME_PER_GAME}s" "${TS_TIME_PER_GAME}s"
+printf "%-25s | %-15s | %-15s\n" "Time per Move" "${CPP_TIME_PER_MOVE}ms" "${TS_TIME_PER_MOVE}ms"
 echo "--------------------------------------------------------------"
 
 if [ "$SPEEDUP" != "N/A" ]; then
@@ -300,6 +345,7 @@ Results:
     Total Moves:        $CPP_MOVES
     Avg Moves/Game:     $CPP_AVG_MOVES
     Time per Game:      ${CPP_TIME_PER_GAME}s
+    Time per Move:      ${CPP_TIME_PER_MOVE}ms
 
   TypeScript MCTS:
     Total Duration:     ${TS_DURATION}s
@@ -307,6 +353,7 @@ Results:
     Total Moves:        $TS_MOVES
     Avg Moves/Game:     $TS_AVG_MOVES
     Time per Game:      ${TS_TIME_PER_GAME}s
+    Time per Move:      ${TS_TIME_PER_MOVE}ms
 
 Performance:
   Speedup:              ${SPEEDUP}×
