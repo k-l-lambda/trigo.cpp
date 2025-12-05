@@ -158,6 +158,10 @@ add_executable(test_prefix_tree_builder tests/test_prefix_tree_builder.cpp src/p
 add_executable(test_mcts tests/test_mcts.cpp)
 target_link_libraries(test_mcts PRIVATE trigo_game)
 
+# Simple MCTS debug test
+add_executable(test_mcts_simple tests/test_mcts_simple.cpp)
+target_link_libraries(test_mcts_simple PRIVATE trigo_game)
+
 # Test NeuralPolicy full inference
 add_executable(test_neural_policy_inference tests/test_neural_policy_inference.cpp src/prefix_tree_builder.cpp)
 target_link_libraries(test_neural_policy_inference PRIVATE

@@ -13,6 +13,8 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <chrono>
+#include <iostream>
 
 
 namespace trigo
@@ -152,14 +154,38 @@ public:
 		root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false);
 		root->visit_count = 1;  // Root is always visited
 
+#ifdef MCTS_ENABLE_PROFILING
+		std::cout << "[MCTS] Starting search with " << num_simulations << " simulations\n";
+		auto start_time = std::chrono::steady_clock::now();
+#endif
+
 		// Run simulations
 		for (int i = 0; i < num_simulations; i++)
 		{
+#ifdef MCTS_ENABLE_PROFILING
+			if (i % 10 == 0)
+			{
+				auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+					std::chrono::steady_clock::now() - start_time
+				).count();
+				std::cout << "[MCTS] Simulation " << i << "/" << num_simulations
+				          << " (" << elapsed << "ms)\n";
+			}
+
+			auto sim_start = std::chrono::steady_clock::now();
+#endif
+
 			// Make a copy of game state for simulation
 			TrigoGame game_copy = game;
 
 			// 1. Selection: Traverse tree using UCB1
 			MCTSNode* node = select(root.get(), game_copy);
+
+#ifdef MCTS_ENABLE_PROFILING
+			auto select_time = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now() - sim_start
+			).count();
+#endif
 
 			// 2. Expansion: Add new child node
 			if (game_copy.is_game_active() && node->visit_count > 0)
@@ -167,12 +193,46 @@ public:
 				node = expand(node, game_copy);
 			}
 
+#ifdef MCTS_ENABLE_PROFILING
+			auto expand_time = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now() - sim_start
+			).count() - select_time;
+#endif
+
 			// 3. Simulation: Play random game to completion
 			float value = simulate(game_copy);
 
+#ifdef MCTS_ENABLE_PROFILING
+			auto simulate_time = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now() - sim_start
+			).count() - select_time - expand_time;
+#endif
+
 			// 4. Backpropagation: Update node statistics
 			backpropagate(node, value);
+
+#ifdef MCTS_ENABLE_PROFILING
+			auto total_time = std::chrono::duration_cast<std::chrono::microseconds>(
+				std::chrono::steady_clock::now() - sim_start
+			).count();
+
+			if (i == 0)
+			{
+				std::cout << "[MCTS] First simulation breakdown:\n";
+				std::cout << "  Selection: " << select_time << "μs\n";
+				std::cout << "  Expansion: " << expand_time << "μs\n";
+				std::cout << "  Simulation: " << simulate_time << "μs\n";
+				std::cout << "  Total: " << total_time << "μs\n";
+			}
+#endif
 		}
+
+#ifdef MCTS_ENABLE_PROFILING
+		auto total_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now() - start_time
+		).count();
+		std::cout << "[MCTS] Search complete in " << total_elapsed << "ms\n";
+#endif
 
 		// Select best move by visit count (most robust)
 		return select_best_child();
