@@ -21,15 +21,12 @@ jobs:
       run: |
         wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-1.17.0.tgz
         tar -xzf onnxruntime-linux-x64-1.17.0.tgz
-        sudo cp -r onnxruntime-linux-x64-1.17.0/include/* /usr/local/include/
-        sudo cp -r onnxruntime-linux-x64-1.17.0/lib/* /usr/local/lib/
-        sudo ldconfig
 
     - name: Build project
       run: |
         mkdir build
         cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=OFF ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=OFF -DONNXRUNTIME_ROOT_DIR=../onnxruntime-linux-x64-1.17.0 ..
         make -j$(nproc)
 
     - name: Package binaries
@@ -39,6 +36,9 @@ jobs:
         cp build/test_* release/trigo.cpp-linux-x64/ 2>/dev/null || true
         cp README.md release/trigo.cpp-linux-x64/
         cp -r docs release/trigo.cpp-linux-x64/
+        # Include ONNX Runtime libraries
+        mkdir -p release/trigo.cpp-linux-x64/lib
+        cp onnxruntime-linux-x64-1.17.0/lib/* release/trigo.cpp-linux-x64/lib/
         cd release
         tar -czf trigo.cpp-linux-x64.tar.gz trigo.cpp-linux-x64/
 
@@ -56,7 +56,7 @@ jobs:
         body: |
           ## Pre-built Binaries
 
-          This release includes pre-built binaries for Linux x64 (CPU-only).
+          This release includes pre-built binaries for Linux x64 (CPU-only) with bundled ONNX Runtime 1.17.0.
 
           **Why CPU-only?**
           Based on comprehensive benchmarking, **CPU is 1.52× faster than GPU** for MCTS self-play with batch=1 workloads. GPU is recommended only for training with large batches (256+).
@@ -68,22 +68,23 @@ jobs:
 
           **Requirements:**
           - Linux x64 (Ubuntu 22.04 or compatible)
-          - ONNX Runtime 1.17.0 (download from [releases](https://github.com/microsoft/onnxruntime/releases/tag/v1.17.0))
+          - ONNX Runtime 1.17.0 is bundled in the release package
 
           **Installation:**
           ```bash
           tar -xzf trigo.cpp-linux-x64.tar.gz
           cd trigo.cpp-linux-x64
 
-          # Download and install ONNX Runtime
-          wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-1.17.0.tgz
-          tar -xzf onnxruntime-linux-x64-1.17.0.tgz
-          export LD_LIBRARY_PATH=$(pwd)/onnxruntime-linux-x64-1.17.0/lib:$LD_LIBRARY_PATH
+          # Set library path to use bundled ONNX Runtime
+          export LD_LIBRARY_PATH=$(pwd)/lib:$LD_LIBRARY_PATH
 
           # Run self-play generator
           export TRIGO_FORCE_CPU=1  # Recommended for best performance
           ./self_play_generator --help
           ```
+
+          **GPU Version Available:**
+          A separate GPU-enabled build is also available: `trigo.cpp-linux-x64-gpu.tar.gz` (requires CUDA 12.3.2+)
 
           For full release notes and performance analysis, see the tag description and [PERFORMANCE_ANALYSIS-1205.md](https://github.com/k-l-lambda/trigo.cpp/blob/main/docs/PERFORMANCE_ANALYSIS-1205.md).
       env:
