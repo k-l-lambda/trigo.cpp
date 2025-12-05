@@ -18,6 +18,7 @@
 #include "shared_model_inferencer.hpp"
 #include "prefix_tree_builder.hpp"
 #include "tgn_tokenizer.hpp"
+#include "mcts.hpp"
 #include <vector>
 #include <random>
 #include <memory>
@@ -28,29 +29,6 @@
 
 namespace trigo
 {
-
-
-/**
- * Action selection result
- */
-struct PolicyAction
-{
-	Position position;
-	bool is_pass;
-	float confidence;  // Policy probability or value estimate
-
-	PolicyAction() : is_pass(true), confidence(0.0f) {}
-	PolicyAction(const Position& pos, float conf = 1.0f)
-		: position(pos), is_pass(false), confidence(conf) {}
-
-	static PolicyAction Pass(float conf = 1.0f)
-	{
-		PolicyAction action;
-		action.is_pass = true;
-		action.confidence = conf;
-		return action;
-	}
-};
 
 
 /**
@@ -216,32 +194,26 @@ public:
  * MCTS Policy (Monte Carlo Tree Search)
  *
  * Pure MCTS without neural guidance
- * Can be enhanced with neural value/policy estimates
- *
- * TODO: Implement MCTS algorithm
+ * Uses UCB1 formula for tree exploration
  */
 class MCTSPolicy : public IPolicy
 {
 private:
+	std::unique_ptr<MCTS> mcts_engine;
 	int num_simulations;
 	float exploration_constant;
 
 public:
-	MCTSPolicy(int num_sims = 800, float c_puct = 1.0f)
-		: num_simulations(num_sims), exploration_constant(c_puct)
+	MCTSPolicy(int num_sims = 800, float c_puct = 1.414f, int seed = 42)
+		: num_simulations(num_sims)
+		, exploration_constant(c_puct)
 	{
+		mcts_engine = std::make_unique<MCTS>(num_sims, c_puct, seed);
 	}
 
 	PolicyAction select_action(const TrigoGame& game) override
 	{
-		// TODO: Implement MCTS search
-		// 1. Build search tree
-		// 2. Run simulations
-		// 3. Select best move by visit count
-
-		// Placeholder: use random for now
-		RandomPolicy fallback;
-		return fallback.select_action(game);
+		return mcts_engine->search(game);
 	}
 
 	std::string name() const override
@@ -325,7 +297,7 @@ public:
 		}
 		else if (type == "mcts")
 		{
-			return std::make_unique<MCTSPolicy>();
+			return std::make_unique<MCTSPolicy>(800, 1.414f, seed);
 		}
 		else if (type == "hybrid")
 		{

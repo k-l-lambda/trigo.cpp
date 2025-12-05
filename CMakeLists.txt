@@ -154,6 +154,10 @@ target_link_libraries(test_trained_model_loading PRIVATE ${ONNXRUNTIME_LIB})
 # Test prefix tree builder
 add_executable(test_prefix_tree_builder tests/test_prefix_tree_builder.cpp src/prefix_tree_builder.cpp)
 
+# Test MCTS implementation
+add_executable(test_mcts tests/test_mcts.cpp)
+target_link_libraries(test_mcts PRIVATE trigo_game)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
