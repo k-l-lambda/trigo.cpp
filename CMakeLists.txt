@@ -133,6 +133,10 @@ add_executable(test_game_replay tests/test_game_replay.cpp)
 add_executable(test_trigo_game tests/test_trigo_game.cpp)
 target_link_libraries(test_trigo_game PRIVATE trigo_game)
 
+# Self-play data generator
+add_executable(self_play_generator src/self_play_generator.cpp)
+target_link_libraries(self_play_generator PRIVATE trigo_game)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
