@@ -1,106 +1,120 @@
-# Trigo.cpp - CUDA-Accelerated MCTS Self-Play Engine
+# Trigo.cpp - High-Performance C++ Tools for Trigo AI
 
-High-performance C++/CUDA implementation of Monte Carlo Tree Search for Trigo (3D Go) training data generation. Achieves **300-1000 games/hour** on single GPU, representing **100-1200× speedup** over TypeScript baseline.
+C++/CUDA inference and self-play tools for [Trigo](https://github.com/k-l-lambda/trigo) (3D Go). Provides ONNX Runtime-based neural network inference, AlphaZero-style MCTS, and high-performance self-play data generation for the [TrigoRL training pipeline](../trigoRL).
 
 ## Overview
 
-This project implements AlphaZero-style self-play for Trigo using GPU-accelerated MCTS. It integrates with the TrigoRL training pipeline to provide high-quality training data at unprecedented speed.
+This project implements production-ready tools for Trigo AI development:
 
 **Key Features**:
-- 🚀 GPU-parallel tree search (10-20× faster than CPU)
-- 📦 Batched neural network inference (5-10× throughput)
-- 🎯 Validates against TypeScript golden implementation
-- 🔗 Python bindings via pybind11
-- 🎮 Supports arbitrary board shapes (2D and 3D)
-- 📊 TGN format output compatible with TrigoRL training
+- 🚀 **ONNX Runtime Integration**: CPU and GPU inference with trained models
+- 🎯 **AlphaZero MCTS**: Value network evaluation (255× faster than random rollouts)
+- 🔧 **Self-Play Generator**: Command-line tool for training data generation
+- ✅ **Cross-Language Validation**: 100% compatibility with TypeScript reference
+- 📦 **Multiple Policies**: Random, Neural, Pure MCTS, AlphaZero MCTS
+- 📊 **TGN Format**: Compatible with TrigoRL training pipeline
 
 ## Quick Start
 
 ### Prerequisites
 
-- CUDA-capable GPU (Compute Capability 7.5+, e.g., RTX 2060+)
-- CUDA Toolkit 11.0+
 - CMake 3.18+
 - GCC 9+ or Clang 10+
-- Python 3.8+
-- PyTorch 2.0+ (with LibTorch)
+- CUDA Toolkit 11.0+ (optional, for GPU inference)
+- ONNX Runtime 1.17.0+ (provided in repository)
 
 ### Build
 
 ```bash
-# Install dependencies
-sudo apt-get install cmake build-essential
+# Clone repository
+cd /path/to/trigo.cpp
 
-# Install PyTorch (provides LibTorch)
-pip install torch==2.0.0
-
-# Build C++/CUDA module
+# Create build directory
 mkdir build && cd build
-cmake .. -DCMAKE_PREFIX_PATH=`python -c 'import torch;print(torch.utils.cmake_prefix_path)'`
+
+# Configure and build
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 
-# Install Python bindings
-cd .. && pip install -e .
+# Run tests
+./test_trigo_game
+./test_alphazero_mcts
 ```
 
 ### Usage
 
-```python
-import torch
-import cuda_mcts
+#### Self-Play Data Generation
 
-# Load trained models (TorchScript)
-policy = torch.jit.load("models/policy_tree.pt")
-value = torch.jit.load("models/value_eval.pt")
+```bash
+# Generate 1000 games using random policies
+./self_play_generator \
+    --num-games 1000 \
+    --board 5x5x5 \
+    --black-policy random \
+    --white-policy random \
+    --output /path/to/data/games \
+    --seed 42
 
-# Create MCTS engine
-engine = cuda_mcts.CudaMCTSSelfPlay(
-    policy_model=policy,
-    value_model=value,
-    num_parallel_games=8,      # Parallel games on GPU
-    mcts_simulations=800,       # MCTS iterations per move
-    c_puct=1.0,                 # Exploration constant
-    temperature=1.0             # Sampling temperature
-)
+# Generate games with neural policy
+./self_play_generator \
+    --num-games 100 \
+    --board 5x5x5 \
+    --black-policy neural \
+    --white-policy neural \
+    --model-path ../models/trained_shared \
+    --output /path/to/data/neural_games
 
-# Generate training data
-board_shapes = [(3,3,1), (5,5,1), (2,2,2), (3,3,3)]
-
-tgn_games = engine.generate_games(
-    num_games=1000,
-    board_shapes=board_shapes,
-    progress_callback=lambda cur, tot, rate:
-        print(f"Progress: {cur}/{tot} ({rate:.1f} games/sec)")
-)
-
-# Save TGN files
-import hashlib
-for tgn in tgn_games:
-    hash_hex = hashlib.sha256(tgn.encode()).hexdigest()[:16]
-    with open(f"data/game_{hash_hex}.tgn", "w") as f:
-        f.write(tgn)
+# Generate games with MCTS (AlphaZero-style)
+./self_play_generator \
+    --num-games 10 \
+    --board 5x5x5 \
+    --black-policy neural \
+    --white-policy neural \
+    --model-path ../models/trained_shared \
+    --output /path/to/data/mcts_games \
+    --mcts-simulations 50
 ```
 
 ## Architecture
 
-### Component Hierarchy
+### Component Stack
 
 ```
-Python Training Pipeline (TrigoRL)
-    ↓ TGN Files
-Python Bindings (pybind11)
-    ↓
-C++ Orchestration Layer
-    ├─ GameBatchManager (multi-game parallel execution)
-    ├─ PolicyModelAdapter (TreeLM inference)
-    ├─ ValueModelAdapter (EvaluationLM inference)
-    └─ TGNWriter (output formatting)
-        ↓
-CUDA MCTS Kernels + Trigo Game Engine
-    ├─ select_leaf_kernel (UCB1 traversal)
-    ├─ expand_leaves_kernel (node creation)
-    ├─ backup_values_kernel (value backpropagation)
-    └─ TrigoGame (3D Go rules)
+┌─────────────────────────────────────────────────────────────┐
+│  Python Training Pipeline (TrigoRL) - SEPARATE PROJECT      │
+│  ├─ PyTorch Model Training                                   │
+│  ├─ ONNX Model Export (exportOnnx.py)                        │
+│  ├─ Training Data Loading (.tgn files)                       │
+│  └─ Weights & Biases Integration                             │
+└─────────────────────────────────────────────────────────────┘
+                           ↓ exports
+                    ONNX Models (.onnx)
+                           ↓ uses
+┌─────────────────────────────────────────────────────────────┐
+│  C++ Inference & Generation Tools (trigo.cpp) - THIS PROJECT│
+│  ├─ SharedModelInferencer (ONNX Runtime + CUDA)             │
+│  │   ├─ Policy Network Inference                             │
+│  │   ├─ Value Network Inference                              │
+│  │   └─ Prefix Tree Attention Builder                        │
+│  ├─ TrigoGame (3D Go rules engine)                           │
+│  │   ├─ Board State Management                               │
+│  │   ├─ Move Validation                                      │
+│  │   ├─ Capture & Ko Detection                               │
+│  │   └─ Territory Calculation                                │
+│  ├─ MCTS (Monte Carlo Tree Search)                           │
+│  │   ├─ AlphaZero MCTS (PUCT, value network) - Production   │
+│  │   └─ Pure MCTS (UCB1, random rollouts) - Reference       │
+│  ├─ Self-Play Generator (data generation tool)               │
+│  │   ├─ RandomPolicy                                         │
+│  │   ├─ NeuralPolicy (ONNX inference)                        │
+│  │   ├─ MCTSPolicy (Pure MCTS)                               │
+│  │   └─ TGN File Export                                      │
+│  └─ Python Bindings (pybind11) [future]                     │
+└─────────────────────────────────────────────────────────────┘
+                           ↓ generates
+                    Training Data (.tgn)
+                           ↓ feeds back to
+                      TrigoRL Pipeline
 ```
 
 ### Directory Structure
@@ -108,180 +122,178 @@ CUDA MCTS Kernels + Trigo Game Engine
 ```
 trigo.cpp/
 ├── include/              # Public C++ headers
-│   ├── mcts_engine.hpp
-│   ├── game_state.hpp
-│   ├── tree_node.hpp
-│   └── ...
+│   ├── trigo_game.hpp               # 3D Go game engine
+│   ├── trigo_coords.hpp             # ab0yz coordinate system
+│   ├── trigo_game_utils.hpp         # Capture, Ko, territory
+│   ├── mcts.hpp                     # AlphaZero MCTS (value network)
+│   ├── mcts_moc.hpp                 # Pure MCTS (random rollouts)
+│   ├── self_play_policy.hpp         # Policy interfaces
+│   ├── shared_model_inferencer.hpp  # ONNX Runtime wrapper
+│   ├── prefix_tree_builder.hpp      # Tree attention
+│   ├── tgn_tokenizer.hpp            # TGN tokenization
+│   └── tgn_utils.hpp                # TGN generation utilities
 ├── src/                  # Implementation
-│   ├── mcts_engine.cu
-│   ├── game_state.cpp
-│   ├── batch_manager.cpp
-│   └── bindings.cpp      # Python interface
-├── kernels/              # CUDA kernels
-│   ├── mcts_select.cu
-│   ├── mcts_expand.cu
-│   └── mcts_backup.cu
+│   ├── trigo_game.cpp
+│   ├── shared_model_inferencer.cpp
+│   ├── tgn_tokenizer.cpp
+│   ├── prefix_tree_builder.cpp
+│   └── self_play_generator.cpp      # Main CLI tool
 ├── tests/                # Unit tests
-├── scripts/              # Python utilities
+│   ├── test_trigo_game.cpp
+│   ├── test_mcts.cpp
+│   ├── test_alphazero_mcts.cpp
+│   ├── test_neural_policy_inference.cpp
+│   └── ...
+├── models/               # Trained ONNX models
+│   └── trained_shared/
+│       ├── base_model.onnx
+│       ├── policy_head.onnx
+│       └── value_head.onnx
 ├── docs/                 # Documentation
+│   └── PLAN.md           # Development roadmap
 ├── CMakeLists.txt
-└── setup.py              # Python package
+└── README.md
 ```
 
 ## Performance
 
-### Benchmarks (Single GPU)
+### MCTS Performance Comparison
 
-| Metric | TypeScript | Trigo.cpp | Speedup |
-|--------|------------|-----------|---------|
-| Games/hour | 3-30 | 300-1000 | 100-1200× |
-| MCTS sims/sec | 10-50 | 1000-5000 | 100-200× |
-| Move time | 100-300ms | 1-3ms | 100× |
+| Implementation | Time per simulation | 50 simulations | 800 simulations |
+|----------------|---------------------|----------------|-----------------|
+| PureMCTS (rollouts) | 923ms | 46 seconds | 12+ minutes |
+| MCTS (value network) | 3.6ms | 180ms | 2.9 seconds |
+| **Speedup** | **255×** | **255×** | **255×** |
 
-**Test System**: RTX 3060 (12GB), AMD Ryzen 7 5800X
+**Test System**: Intel CPU, NVIDIA GPU, ONNX Runtime 1.17.0
 
-### Memory Usage
+### Self-Play Generation Speed
 
-- Tree nodes: 640 MB (8 games × 1M nodes)
-- Board states: 17 MB
-- Inference buffers: 128 MB
-- Model weights: 1000 MB
-- **Total**: ~1.8 GB (fits on 8GB+ GPUs)
+| Policy Combination | Games per second (5×5×5) |
+|-------------------|--------------------------|
+| Random vs Random | ~3 games/sec |
+| Neural vs Random | ~1 game/sec |
+| Neural vs Neural | ~0.5 games/sec |
+| MCTS vs Random | ~0.3 games/sec |
 
-### Optimization Techniques
+## Implementation Status
 
-1. **GPU-Parallel Tree Traversal**: Multiple games explore trees simultaneously
-2. **Batched Inference**: Evaluate 64 leaf positions in single forward pass
-3. **Prefix Tree Compression**: Merge identical move prefixes (from TrigoTreeAgent)
-4. **Delta Encoding**: Store board state changes instead of full copies
-5. **Pinned Memory**: Fast CPU-GPU transfers for inference I/O
-6. **FP16 Inference**: Half-precision for 2× speedup (optional)
+### ✅ Phase 1: Model Inference - COMPLETE
+
+- ✅ `SharedModelInferencer` - ONNX Runtime with shared base model
+- ✅ `TGNTokenizer` - Compatible with Python training tokenizer
+- ✅ `PrefixTreeBuilder` - Tree attention support
+- ✅ ONNX models can be loaded and run
+- ✅ Model format: 3-model architecture (base + policy_head + value_head)
+
+### ✅ Phase 2: Game Engine - COMPLETE
+
+- ✅ `TrigoGame` - Complete 3D Go engine
+- ✅ `trigo_coords.hpp` - ab0yz coordinate encoding
+- ✅ `trigo_game_utils.hpp` - Capture, Ko, territory
+- ✅ `tgn_utils.hpp` - Shared TGN generation
+- ✅ Cross-language validation (100/100 games vs TypeScript)
+
+### ✅ Phase 3: MCTS Algorithm - COMPLETE
+
+- ✅ PureMCTS with random rollouts (`include/mcts_moc.hpp`)
+  - UCB1 selection, tree expansion, backpropagation working
+  - Reference implementation for validation
+  - Performance: ~923ms per simulation
+- ✅ AlphaZero-style MCTS with value network (`include/mcts.hpp`)
+  - Uses `SharedModelInferencer::value_inference()` for evaluation
+  - PUCT formula for exploration
+  - **Performance: 255× speedup** (~3.6ms per simulation)
+  - Production-ready implementation
+
+### 🚧 Phase 4: GPU Acceleration - FUTURE
+
+- Planned: CUDA MCTS kernels for parallel tree operations
+- Planned: Batched neural network inference
+- Target: 50-100 games/sec on GPU
 
 ## Validation
 
-The implementation is validated against the TypeScript golden reference at `trigoRL/third_party/trigo/trigo-web/tools/selfPlayGames.ts`.
+The implementation is validated against the TypeScript golden reference at `trigoRL/third_party/trigo/trigo-web/`.
 
-### Test Suite
-
-```bash
-# Run validation tests
-python scripts/validate_mcts.py
-
-# Compare with TypeScript
-python scripts/validate_mcts.py --compare-typescript
-```
-
-**Validation Criteria**:
-- ✅ All moves legal (pass `is_legal_move()`)
-- ✅ Capture detection matches TypeScript
-- ✅ Ko rule enforced correctly
+**Validation Results**:
+- ✅ 100/100 games match TypeScript implementation
+- ✅ All moves legal (capture, Ko, suicide rules)
 - ✅ Territory scoring matches
 - ✅ TGN format parseable by TGNValueDataset
 - ✅ Games terminate correctly
 
 ## Integration with TrigoRL Training
 
-### AlphaZero-Style Training Loop
+### Data Flow
 
-```python
-# scripts/alphazero_training_loop.py
-from trigor.training import LMTrainer
-from trigor.data import TGNValueDataset
-import cuda_mcts
+1. **TrigoRL** trains models → exports `.onnx` files
+2. **trigo.cpp** loads `.onnx` → runs self-play → generates `.tgn` files
+3. **TrigoRL** loads `.tgn` files → continues training (iterative improvement)
 
-for iteration in range(NUM_ITERATIONS):
-    # Step 1: Self-play with current model
-    policy = torch.jit.load(f"checkpoints/iter{iteration}_policy.pt")
-    value = torch.jit.load(f"checkpoints/iter{iteration}_value.pt")
+### Model Format
 
-    engine = cuda_mcts.CudaMCTSSelfPlay(policy, value)
-    tgn_games = engine.generate_games(num_games=1000)
+The project uses a 3-model architecture:
+- `base_model.onnx` - Shared transformer base
+- `policy_head.onnx` - Policy network (move prediction)
+- `value_head.onnx` - Value network (position evaluation)
 
-    # Step 2: Save TGN files
-    save_games(tgn_games, f"data/iter{iteration}/")
-
-    # Step 3: Train on new data
-    dataset = TGNValueDataset(data_dir=f"data/iter{iteration}/")
-    trainer = LMTrainer(config, dataset)
-    trainer.train(num_epochs=10)
-
-    # Step 4: Export for next iteration
-    export_to_torchscript(trainer.model,
-        f"checkpoints/iter{iteration+1}_policy.pt",
-        f"checkpoints/iter{iteration+1}_value.pt")
-```
+Models are exported from TrigoRL using `exportOnnx.py`.
 
 ## Development
 
-### Building from Source
+### Building Tests
 
 ```bash
-git clone https://github.com/yourusername/trigo.cpp.git
-cd trigo.cpp
+cd build
 
-# Debug build
-mkdir build-debug && cd build-debug
-cmake .. -DCMAKE_BUILD_TYPE=Debug
-make -j$(nproc)
+# Build specific test
+make test_trigo_game
 
-# Run tests
-ctest --verbose
-
-# Run validation
-cd .. && python scripts/validate_mcts.py
+# Run test
+./test_trigo_game
 ```
 
-### Code Structure
+### Available Tests
 
-**Core Classes**:
-- `MCTSNode`: GPU-optimized tree node (80 bytes)
-- `TrigoGame`: 3D Go game engine (ported from TypeScript)
-- `PrefixTreeBuilder`: Batched move evaluation (ported from TypeScript)
-- `PolicyModelAdapter`: TreeLM interface via LibTorch
-- `ValueModelAdapter`: EvaluationLM interface via LibTorch
-- `CudaMCTSSelfPlay`: Main Python-facing class
+- `test_trigo_game` - Game engine validation
+- `test_trigo_coords` - Coordinate system
+- `test_trigo_game_utils` - Go rules (capture, Ko)
+- `test_mcts` - Pure MCTS implementation
+- `test_alphazero_mcts` - AlphaZero MCTS performance
+- `test_neural_policy_inference` - Neural policy
+- `test_tgn_consistency` - TGN format validation
+- `test_game_replay` - Cross-language validation
 
-**CUDA Kernels**:
-- `select_leaf_kernel`: UCB1 tree traversal
-- `expand_leaves_kernel`: Child node creation
-- `backup_values_kernel`: Value backpropagation
-- `validate_moves_kernel`: Fast move legality check
+### Code Style
+
+- C++17 standard
+- Modern C++ (curly braces on standalone lines, tab indentation)
+- Comprehensive comments
+- DRY principle (avoid code duplication)
 
 ## Documentation
 
-- [Architecture](docs/ARCHITECTURE.md) - Technical design details
-- [Implementation Plan](docs/PLAN.md) - Development roadmap
-- [API Reference](docs/API.md) - Python and C++ APIs
-- [Porting Guide](docs/PORTING.md) - TypeScript → C++ translation notes
-- [Performance Guide](docs/PERFORMANCE.md) - Optimization techniques
+- [Development Plan](docs/PLAN.md) - Roadmap and implementation status
+- [Model Inference](docs/research/MODEL_INFERENCE.md) - ONNX Runtime integration
+- [CUDA Inference](docs/research/CUDA_INFERENCE.md) - GPU acceleration research
+- [Validation Report](docs/research/VALIDATION_REPORT.md) - Cross-language validation
 
-## Contributing
+## References
 
-This project is part of the TrigoRL research initiative. See [PLAN.md](docs/PLAN.md) for development roadmap.
-
-### Development Phases
-
-- ✅ Phase 0: Planning and feasibility study
-- [ ] Phase 1: Core infrastructure (Weeks 1-2)
-- [ ] Phase 2: CUDA kernels (Weeks 3-4)
-- [ ] Phase 3: Neural network integration (Weeks 5-6)
-- [ ] Phase 4: Validation & optimization (Weeks 7-8)
-- [ ] Phase 5: Production integration (Weeks 9-10)
-
-Current status: **Phase 0 Complete** - Architecture designed, feasibility confirmed
+- [Trigo Game Rules](https://github.com/k-l-lambda/trigo)
+- [TrigoRL Training Pipeline](../trigoRL)
+- [AlphaZero Paper](https://arxiv.org/abs/1712.01815)
+- [ONNX Runtime](https://onnxruntime.ai/)
 
 ## License
 
 [Specify license]
 
-## Acknowledgments
+---
 
-- Based on the TypeScript implementation in [TrigoRL](https://github.com/yourusername/trigoRL)
-- Inspired by AlphaZero (Silver et al., 2017)
-- Uses TreeLM architecture for efficient batched evaluation
+**Project Scope**: C++/CUDA tools for Trigo game engine and MCTS self-play generation
 
-## References
+**Goal**: Provide high-performance tools for TrigoRL training pipeline
 
-- [Trigo Game Rules](https://github.com/k-l-lambda/trigo/docs/rules.md)
-- [TrigoRL Training Pipeline](https://github.com/yourusername/trigoRL)
-- [AlphaZero Paper](https://arxiv.org/abs/1712.01815)
+**Status**: Phases 1-3 Complete - Production-ready self-play generation with AlphaZero MCTS
