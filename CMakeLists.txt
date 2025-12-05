@@ -158,6 +158,23 @@ add_executable(test_prefix_tree_builder tests/test_prefix_tree_builder.cpp src/p
 add_executable(test_mcts tests/test_mcts.cpp)
 target_link_libraries(test_mcts PRIVATE trigo_game)
 
+# Test NeuralPolicy full inference
+add_executable(test_neural_policy_inference tests/test_neural_policy_inference.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_neural_policy_inference PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+	CUDA::cudart
+)
+set_target_properties(test_neural_policy_inference PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test TGN generation consistency
+add_executable(test_tgn_consistency tests/test_tgn_consistency.cpp)
+target_link_libraries(test_tgn_consistency PRIVATE trigo_game)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)

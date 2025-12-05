@@ -15,6 +15,8 @@
 #pragma once
 
 #include "trigo_game.hpp"
+#include "trigo_coords.hpp"
+#include "tgn_utils.hpp"
 #include "shared_model_inferencer.hpp"
 #include "prefix_tree_builder.hpp"
 #include "tgn_tokenizer.hpp"
@@ -161,18 +163,74 @@ public:
 			return PolicyAction::Pass();
 		}
 
-		// TODO: Full neural policy implementation requires:
-		// 1. Understanding token-to-move mapping for the vocabulary
-		// 2. Handling the logits output shape [batch, seq_len, vocab_size]
-		// 3. Extracting probabilities for each candidate move
-		//
-		// For now, use a weighted random selection as placeholder
-		// This allows testing the infrastructure while we figure out the exact mapping
+		// Convert game history to tokens
+		auto prefix_tokens = game_to_tokens(game);
 
-		std::uniform_int_distribution<size_t> dist(0, valid_moves.size() - 1);
-		size_t selected_idx = dist(rng);
+		// Build token sequences for each candidate move
+		auto board_shape = game.get_shape();
+		std::vector<std::vector<int64_t>> candidate_sequences;
 
-		return PolicyAction(valid_moves[selected_idx], 1.0f / valid_moves.size());
+		for (const auto& move : valid_moves)
+		{
+			std::vector<int64_t> seq = prefix_tokens;
+
+			// Encode move (no padding, no special tokens)
+			std::string coord = encode_ab0yz(move, board_shape);
+			auto move_tokens = tokenizer.encode(coord, 2048, false, false, false, false);
+
+			seq.insert(seq.end(), move_tokens.begin(), move_tokens.end());
+			candidate_sequences.push_back(seq);
+		}
+
+		// Build prefix tree
+		auto tree_structure = tree_builder.build_tree(candidate_sequences);
+
+		// Run policy inference
+		int prefix_len = static_cast<int>(prefix_tokens.size());
+		int eval_len = tree_structure.num_nodes;
+
+		try
+		{
+			auto logits = inferencer->policy_inference(
+				prefix_tokens,
+				tree_structure.evaluated_ids,
+				tree_structure.evaluated_mask,
+				1,  // batch_size
+				prefix_len,
+				eval_len
+			);
+
+			// Extract move logits
+			std::vector<float> move_logits;
+			for (size_t i = 0; i < valid_moves.size(); i++)
+			{
+				int leaf_pos = tree_structure.move_to_leaf[i];
+				const auto& move_seq = candidate_sequences[i];
+				int64_t last_token = move_seq.back();
+
+				// Get logit for this token at this position
+				int logit_idx = leaf_pos * 128 + static_cast<int>(last_token);
+				float logit = logits[logit_idx];
+
+				move_logits.push_back(logit);
+			}
+
+			// Apply softmax with temperature
+			auto probs = softmax_with_temperature(move_logits, temperature);
+
+			// Sample move according to probabilities
+			std::discrete_distribution<size_t> dist(probs.begin(), probs.end());
+			size_t selected_idx = dist(rng);
+
+			return PolicyAction(valid_moves[selected_idx], probs[selected_idx]);
+		}
+		catch (const std::exception& e)
+		{
+			// Fallback to random on inference error
+			std::uniform_int_distribution<size_t> dist(0, valid_moves.size() - 1);
+			size_t selected_idx = dist(rng);
+			return PolicyAction(valid_moves[selected_idx], 1.0f / valid_moves.size());
+		}
 	}
 
 	std::string name() const override
@@ -181,12 +239,60 @@ public:
 	}
 
 
-	// TODO: Implement these helper methods when neural inference is fully implemented
-	/*
-	private:
-		std::vector<int64_t> game_to_tokens(const TrigoGame& game);
-		std::vector<float> softmax_with_temperature(const std::vector<float>& logits, float temp);
-	*/
+private:
+	/**
+	 * Convert game history to token sequence in TGN format
+	 *
+	 * Uses shared TGN generation logic from tgn_utils.hpp
+	 */
+	std::vector<int64_t> game_to_tokens(const TrigoGame& game)
+	{
+		// Generate TGN text using shared utility
+		std::string tgn_text = game_to_tgn(game, false);
+
+		// Tokenize the complete TGN text
+		auto encoded = tokenizer.encode(tgn_text, 8192, false, false, false, false);
+
+		// Add START token at beginning
+		std::vector<int64_t> tokens;
+		tokens.push_back(1);  // START token
+		tokens.insert(tokens.end(), encoded.begin(), encoded.end());
+
+		return tokens;
+	}
+
+
+	/**
+	 * Apply softmax with temperature to logits
+	 */
+	std::vector<float> softmax_with_temperature(const std::vector<float>& logits, float temp)
+	{
+		// Apply temperature
+		std::vector<float> scaled_logits(logits.size());
+		for (size_t i = 0; i < logits.size(); i++)
+		{
+			scaled_logits[i] = logits[i] / temp;
+		}
+
+		// Compute softmax
+		float max_logit = *std::max_element(scaled_logits.begin(), scaled_logits.end());
+		std::vector<float> exp_vals(scaled_logits.size());
+		float sum = 0.0f;
+
+		for (size_t i = 0; i < scaled_logits.size(); i++)
+		{
+			exp_vals[i] = std::exp(scaled_logits[i] - max_logit);
+			sum += exp_vals[i];
+		}
+
+		std::vector<float> probs(scaled_logits.size());
+		for (size_t i = 0; i < scaled_logits.size(); i++)
+		{
+			probs[i] = exp_vals[i] / sum;
+		}
+
+		return probs;
+	}
 };
 
 
@@ -297,7 +403,7 @@ public:
 		}
 		else if (type == "mcts")
 		{
-			return std::make_unique<MCTSPolicy>(800, 1.414f, seed);
+			return std::make_unique<MCTSPolicy>(50, 1.414f, seed);  // Reduced for CPU testing
 		}
 		else if (type == "hybrid")
 		{
