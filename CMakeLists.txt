@@ -134,13 +134,25 @@ add_executable(test_trigo_game tests/test_trigo_game.cpp)
 target_link_libraries(test_trigo_game PRIVATE trigo_game)
 
 # Self-play data generator
-add_executable(self_play_generator src/self_play_generator.cpp)
-target_link_libraries(self_play_generator PRIVATE trigo_game)
+add_executable(self_play_generator src/self_play_generator.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(self_play_generator PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+	CUDA::cudart
+)
+set_target_properties(self_play_generator PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
 
 # Test trained model loading
 add_executable(test_trained_model_loading tests/test_trained_model_loading.cpp)
 target_include_directories(test_trained_model_loading PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
 target_link_libraries(test_trained_model_loading PRIVATE ${ONNXRUNTIME_LIB})
+
+# Test prefix tree builder
+add_executable(test_prefix_tree_builder tests/test_prefix_tree_builder.cpp src/prefix_tree_builder.cpp)
 
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
