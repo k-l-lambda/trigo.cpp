@@ -198,7 +198,80 @@
 
 ---
 
-### Phase 5: GPU Acceleration - FUTURE
+### Phase 5: KV Cache Optimization ✅ Research Complete, Testing In Progress
+
+**Goal**: Implement GPU memory management for KV cache to accelerate sequential inference
+
+**Status**: Research phase complete (December 5, 2025)
+
+**Research Findings** (documented in `docs/KVCACHE_DESIGN.md`):
+
+✅ **ONNX Runtime C++ API supports PyTorch-like GPU memory management**
+- `IOBinding` API for zero-copy GPU tensor binding
+- `Value::CreateTensor()` with CUDA memory for persistent GPU tensors
+- Full support for cross-inference tensor reuse
+
+**Implementation Approaches**:
+
+1. **IOBinding + Persistent GPU Tensors** (Recommended)
+   - Similar to PyTorch KV cache pattern
+   - Zero CPU-GPU copy overhead
+   - Highest performance (10-100× speedup for sequential generation)
+
+2. **Manual CUDA Memory Management** (Advanced)
+   - Lower-level control with `cudaMalloc`/`cudaFree`
+   - Wrap CUDA buffers as `Ort::Value` tensors
+   - Suitable for special requirements
+
+**Expected Performance**:
+- First token latency: No change
+- **Subsequent token latency: 10-100× reduction** (vs recomputing full sequence)
+- Memory overhead: ~75 MB per batch (GPT-2 scale, 2048 max length)
+
+**Key APIs**:
+```cpp
+// Create CUDA memory info
+auto memory_info = Ort::MemoryInfo::CreateCuda(device_id, OrtMemTypeDefault);
+
+// Create persistent GPU tensor
+Ort::Value cache = Ort::Value::CreateTensor<float>(cuda_allocator, shape);
+
+// Bind to inference
+Ort::IoBinding io_binding(session);
+io_binding.BindInput("past_key_cache", cache);
+io_binding.BindOutput("present_key_cache", memory_info);
+```
+
+**Current Tasks**:
+
+- [ ] **Phase 5.1: Prototype Implementation** (NEXT)
+  - Create minimal KV cache inferencer class
+  - Test with dummy model or simple transformer
+  - Validate GPU memory persistence across calls
+  - Measure memory usage and latency
+
+- [ ] **Phase 5.2: Performance Benchmarking**
+  - Compare with/without KV cache (latency)
+  - Measure memory overhead
+  - Test different sequence lengths (128, 512, 1024, 2048)
+  - Profile GPU memory transfers
+
+- [ ] **Phase 5.3: Integration with SharedModelInferencer**
+  - Modify model export to support KV cache I/O
+  - Update `SharedModelInferencer` to use IOBinding
+  - Add KV cache management to NeuralPolicy
+  - End-to-end testing
+
+**Limitations**:
+- Model must be exported with `use_cache=True` (past/present key-value inputs/outputs)
+- Static shape models may need fixed `max_seq_len`
+- Memory scales with: `2 * num_layers * batch * num_heads * max_seq_len * head_dim * sizeof(float)`
+
+**Priority**: Medium-High (significant inference speedup for sequential generation)
+
+---
+
+### Phase 6: Batched GPU Acceleration - FUTURE
 
 **Planned Components**:
 - Batch MCTS leaf evaluation (evaluate 64-256 positions simultaneously)
@@ -214,7 +287,32 @@
 
 ## Current Tasks
 
-### Next: HybridPolicy Implementation (Optional Enhancement)
+### Next: Phase 5.1 - KV Cache Prototype & Performance Testing
+
+**Goal**: Create minimal working prototype to validate KV cache design and measure performance
+
+**Tasks**:
+1. Create `test_kvcache_prototype.cpp` test program
+2. Implement basic `TransformerInferencer` class with IOBinding
+3. Test with dummy/simple model (or adapt existing model)
+4. Measure:
+   - Memory usage (with/without cache)
+   - First token latency
+   - Subsequent token latency
+   - Speedup factor
+5. Document findings in `docs/KVCACHE_BENCHMARK.md`
+
+**Success Criteria**:
+- ✅ GPU tensors persist across multiple inference calls
+- ✅ Zero CPU-GPU copies for cache
+- ✅ Measured speedup >10× for token generation
+- ✅ Memory overhead matches theoretical calculations
+
+**Priority**: High (validate research findings with real implementation)
+
+---
+
+### Alternative: HybridPolicy Implementation (Optional Enhancement)
 
 **Status**: Currently a placeholder in `self_play_policy.hpp:344`
 
@@ -285,6 +383,8 @@
 ---
 
 **Last Updated**: December 5, 2025
-**Current Status**: Phase 4 MCTS Benchmarking complete - C++ CPU is 5.47× faster than TypeScript, GPU is 1.52× slower than CPU for batch=1 workloads
+**Current Status**:
+- Phase 4 MCTS Benchmarking complete - C++ CPU is 5.47× faster than TypeScript
+- Phase 5 KV Cache research complete - Design validated, ready for prototyping
 **Production Ready**: C++ MCTS with CPU execution is production-ready for large-scale self-play data generation
-**Next Step**: Optional enhancements (HybridPolicy, Python bindings) or batched GPU acceleration (Phase 5)
+**Next Step**: Phase 5.1 - KV Cache prototype implementation and performance testing
