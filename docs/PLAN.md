@@ -151,12 +151,62 @@
 
 ---
 
-### Phase 4: GPU Acceleration - FUTURE
+### Phase 4: MCTS Performance Benchmarking ✅ COMPLETE
+
+**Completed**: Comprehensive three-way performance comparison (December 5, 2025)
+
+**Test Configuration**:
+- 10 games with AlphaZero MCTS (50 simulations per move)
+- Board: 5×5×1
+- Model: Dynamic ONNX shared architecture
+- Hardware: RTX 3090 (24GB), Multi-core CPU
+
+**Performance Results**:
+
+| Implementation | Time per Move | Total Duration | Speedup vs TypeScript |
+|----------------|---------------|----------------|----------------------|
+| **C++ CPU** | 280ms | 117s | **6.59×** |
+| **C++ GPU** | 335ms | 178s | 5.51× |
+| **TypeScript** | 1846ms | 641s | 1× (baseline) |
+
+**Key Findings**:
+
+1. **C++ is 5.47× faster than TypeScript** for MCTS self-play
+   - Production-ready for large-scale data generation
+   - Can generate 10K games in 32.5 hours (CPU)
+
+2. **GPU is SLOWER than CPU for batch=1 MCTS** (counter-intuitive but expected)
+   - GPU: 335ms vs CPU: 280ms per move (0.66× performance)
+   - **1.52× slower overall** (178s vs 117s)
+   - Root cause: Small batch size (batch=1) underutilizes GPU parallelism
+   - CUDA kernel launch overhead (~100-150μs) dominates small model inference
+   - 7 Memcpy nodes added for GPU, some operators fall back to CPU
+   - GPU cores 99% idle with batch=1 workload
+
+3. **GPU advantage depends on workload characteristics**:
+   - ❌ Self-play with batch=1 MCTS: CPU wins (1.52× faster)
+   - ✅ Training with batch=256+: GPU wins (10-50× faster expected)
+   - ✅ Batch inference with 64+ positions: GPU wins (5-20× faster expected)
+
+**Recommendations**:
+- **Use CPU for MCTS self-play** (default: `TRIGO_FORCE_CPU=1`)
+- Use GPU only for training (where large batches are natural)
+- Future optimization: Implement batch MCTS leaf evaluation for GPU
+- Future optimization: Parallel self-play (multiple games simultaneously)
+
+**Documentation**: See `docs/PERFORMANCE_ANALYSIS-1205.md` for detailed analysis
+
+---
+
+### Phase 5: GPU Acceleration - FUTURE
 
 **Planned Components**:
+- Batch MCTS leaf evaluation (evaluate 64-256 positions simultaneously)
+- Parallel self-play generation (8-16 games concurrently)
 - CUDA MCTS kernels for parallel tree operations
-- Batched neural network inference
-- Target: 50-100 games/sec on GPU
+- Target: 10-20× speedup with proper batching
+
+**Priority**: Low (current CPU implementation is sufficient for production use)
 
 **Not Started**.
 
@@ -235,5 +285,6 @@
 ---
 
 **Last Updated**: December 5, 2025
-**Current Status**: Phase 3 MCTS complete - AlphaZero-style MCTS with value network achieves 255× speedup
-**Next Step**: Optional enhancements (HybridPolicy, Python bindings) or GPU acceleration (Phase 4)
+**Current Status**: Phase 4 MCTS Benchmarking complete - C++ CPU is 5.47× faster than TypeScript, GPU is 1.52× slower than CPU for batch=1 workloads
+**Production Ready**: C++ MCTS with CPU execution is production-ready for large-scale self-play data generation
+**Next Step**: Optional enhancements (HybridPolicy, Python bindings) or batched GPU acceleration (Phase 5)
