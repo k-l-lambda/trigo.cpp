@@ -137,6 +137,11 @@ target_link_libraries(test_trigo_game PRIVATE trigo_game)
 add_executable(self_play_generator src/self_play_generator.cpp)
 target_link_libraries(self_play_generator PRIVATE trigo_game)
 
+# Test trained model loading
+add_executable(test_trained_model_loading tests/test_trained_model_loading.cpp)
+target_include_directories(test_trained_model_loading PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+target_link_libraries(test_trained_model_loading PRIVATE ${ONNXRUNTIME_LIB})
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
