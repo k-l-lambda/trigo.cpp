@@ -24,9 +24,10 @@ jobs:
 
     - name: Build project
       run: |
+        export ONNXRUNTIME_ROOT_DIR=$PWD/onnxruntime-linux-x64-1.17.0
         mkdir build
         cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=OFF -DONNXRUNTIME_ROOT_DIR=../onnxruntime-linux-x64-1.17.0 ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=OFF -DONNXRUNTIME_ROOT_DIR=$ONNXRUNTIME_ROOT_DIR ..
         make -j$(nproc)
 
     - name: Package binaries
@@ -113,9 +114,10 @@ jobs:
 
     - name: Build project with CUDA
       run: |
+        export ONNXRUNTIME_ROOT_DIR=$PWD/onnxruntime-linux-x64-gpu-1.17.0
         mkdir build
         cd build
-        cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=ON -DONNXRUNTIME_ROOT_DIR=../onnxruntime-linux-x64-gpu-1.17.0 ..
+        cmake -DCMAKE_BUILD_TYPE=Release -DUSE_CUDA=ON -DONNXRUNTIME_ROOT_DIR=$ONNXRUNTIME_ROOT_DIR ..
         make -j$(nproc)
 
     - name: Package binaries
