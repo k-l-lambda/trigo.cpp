@@ -59,6 +59,7 @@ onnxruntime-*.tgz
 onnxruntime-*.tar.gz
 onnxruntime-linux-x64-gpu-*/
 *.tgz.1
+*.tgz.aria2
 
 # Generated files
 *.log

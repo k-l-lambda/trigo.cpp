@@ -7,6 +7,10 @@
 #include <iomanip>
 #include <cstring>
 
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#endif
+
 
 namespace trigo
 {

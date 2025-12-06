@@ -63,6 +63,7 @@ find_path(JSON_INCLUDE_DIR
 	PATHS
 		/usr/include
 		/usr/local/include
+		${CMAKE_CURRENT_SOURCE_DIR}/include
 		${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/json/include
 )
 
@@ -100,7 +101,7 @@ if(USE_CUDA)
 	target_compile_definitions(kvcache_inferencer PUBLIC USE_CUDA)
 endif()
 
-# Build test executable
+# Build test executables
 add_executable(test_kvcache_prototype
 	test_kvcache.cpp
 )
@@ -116,6 +117,25 @@ endif()
 
 # Set RPATH for ONNX Runtime
 set_target_properties(test_kvcache_prototype PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Build minimal test (simpler, for quick validation)
+add_executable(test_minimal
+	test_minimal.cpp
+)
+
+target_link_libraries(test_minimal PRIVATE
+	kvcache_inferencer
+	${ONNXRUNTIME_LIB}
+)
+
+if(USE_CUDA)
+	target_link_libraries(test_minimal PRIVATE CUDA::cudart)
+endif()
+
+set_target_properties(test_minimal PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )

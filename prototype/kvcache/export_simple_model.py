@@ -154,7 +154,7 @@ def export_simple_model(
     num_layers=4,
     num_heads=4,
     max_seq_len=512,
-    opset_version=14
+    opset_version=13
 ):
     """
     Export simplified transformer with KV cache
