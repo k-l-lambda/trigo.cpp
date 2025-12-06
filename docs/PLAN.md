@@ -198,11 +198,11 @@
 
 ---
 
-### Phase 5: KV Cache Optimization ✅ Research Complete, Testing In Progress
+### Phase 5: KV Cache Optimization ✅ Phase 5.1 Complete, Phase 5.2 In Progress
 
-**Goal**: Implement GPU memory management for KV cache to accelerate sequential inference
+**Goal**: Implement Prefix KV Cache for BaseModelWithTreeAttention to accelerate MCTS inference
 
-**Status**: Research phase complete (December 5, 2025)
+**Status**: Python core implementation complete (December 6, 2025)
 
 **Research Findings** (documented in `docs/KVCACHE_DESIGN.md`):
 
@@ -223,6 +223,12 @@
    - Wrap CUDA buffers as `Ort::Value` tensors
    - Suitable for special requirements
 
+**Prototype Validation Results** (documented in `prototype/kvcache/KVCACHE_BENCHMARK.md`):
+- ✅ **4.78× speedup** achieved with Python ONNX Runtime
+- First 10 tokens: 24.83ms (no cache) → 5.20ms (with cache)
+- Average per token: 2.48ms → 0.52ms
+- Memory overhead: ~8 KB per token (4-layer model)
+
 **Expected Performance**:
 - First token latency: No change
 - **Subsequent token latency: 10-100× reduction** (vs recomputing full sequence)
@@ -242,32 +248,62 @@ io_binding.BindInput("past_key_cache", cache);
 io_binding.BindOutput("present_key_cache", memory_info);
 ```
 
+**Completed Tasks**:
+
+- ✅ **Phase 5.1: Python Core Implementation** (COMPLETE - December 6, 2025)
+  - ✅ Modified `BaseModelWithTreeAttention` in `trigoRL/exportOnnx.py`
+  - ✅ Implemented two execution modes (cache vs no-cache)
+  - ✅ Added cache helper methods (`_get_cache_length`, `_tuple_to_cache`, `_cache_to_tuple`)
+  - ✅ Built attention mask builders for both modes
+  - ✅ Comprehensive unit tests (12/12 passing)
+  - ✅ Integration test with real GPT2 model (all tests passing)
+  - ✅ Documentation: See implementation details in `trigoRL/tests/test_kvcache.py`
+
 **Current Tasks**:
 
-- [ ] **Phase 5.1: Prototype Implementation** (NEXT)
-  - Create minimal KV cache inferencer class
-  - Test with dummy model or simple transformer
-  - Validate GPU memory persistence across calls
-  - Measure memory usage and latency
+- [ ] **Phase 5.2: ONNX Export Implementation** (IN PROGRESS)
+  - [ ] Implement `export_shared_architecture_with_cache()` method
+  - [ ] Create `CachedONNXWrapper` for flat cache I/O
+  - [ ] Add `--with-cache` CLI flag to exportOnnx.py
+  - [ ] Export two ONNX models (base_model.onnx + base_model_cached.onnx)
+  - [ ] Validate exported models with onnxruntime
 
-- [ ] **Phase 5.2: Performance Benchmarking**
-  - Compare with/without KV cache (latency)
-  - Measure memory overhead
-  - Test different sequence lengths (128, 512, 1024, 2048)
-  - Profile GPU memory transfers
+- [ ] **Phase 5.3: Performance Benchmarking**
+  - [ ] Measure speedup in Python (target: 2-5× for MCTS use case)
+  - [ ] Validate numerical accuracy
+  - [ ] Test different prefix/evaluated lengths
+  - [ ] Document results in `docs/KVCACHE_BENCHMARK.md`
 
-- [ ] **Phase 5.3: Integration with SharedModelInferencer**
-  - Modify model export to support KV cache I/O
-  - Update `SharedModelInferencer` to use IOBinding
-  - Add KV cache management to NeuralPolicy
-  - End-to-end testing
+- [ ] **Phase 5.4: C++ Integration** (FUTURE)
+  - [ ] Update `SharedModelInferencer` to support cached models
+  - [ ] Add KV cache management with IOBinding
+  - [ ] Integrate with MCTS policy evaluation
+  - [ ] End-to-end testing with self-play
+
+**Implementation Details**:
+
+**Python Core** (`trigoRL/exportOnnx.py:742-985`):
+- `BaseModelWithTreeAttention` now supports `use_cache=True` parameter
+- Two execution modes:
+  - **No cache**: Computes full sequence (prefix + evaluated)
+  - **Cache mode**: Skips prefix, only computes evaluated tokens
+- Cache format: Uses transformers `DynamicCache` internally, converts to/from tuple for ONNX
+- Position IDs: In cache mode, evaluated tokens get positions `prefix_length + mask_row_sums - 1`
+- Attention mask: Cache mode allows evaluated tokens to attend to full cached prefix
+
+**Test Coverage** (`trigoRL/tests/test_kvcache.py`):
+- ✅ Cache vs no-cache correctness (3 tests)
+- ✅ Position IDs calculation (2 tests)
+- ✅ Attention mask construction (3 tests)
+- ✅ Cache format conversion (4 tests)
+- ✅ Integration with GPT2 model (3 tests)
 
 **Limitations**:
 - Model must be exported with `use_cache=True` (past/present key-value inputs/outputs)
 - Static shape models may need fixed `max_seq_len`
 - Memory scales with: `2 * num_layers * batch * num_heads * max_seq_len * head_dim * sizeof(float)`
 
-**Priority**: Medium-High (significant inference speedup for sequential generation)
+**Priority**: Medium-High (significant inference speedup for MCTS sequential evaluation)
 
 ---
 
@@ -287,28 +323,29 @@ io_binding.BindOutput("present_key_cache", memory_info);
 
 ## Current Tasks
 
-### Next: Phase 5.1 - KV Cache Prototype & Performance Testing
+### Next: Phase 5.2 - ONNX Export Implementation
 
-**Goal**: Create minimal working prototype to validate KV cache design and measure performance
+**Goal**: Export BaseModelWithTreeAttention with KV cache support to ONNX format
 
 **Tasks**:
-1. Create `test_kvcache_prototype.cpp` test program
-2. Implement basic `TransformerInferencer` class with IOBinding
-3. Test with dummy/simple model (or adapt existing model)
-4. Measure:
-   - Memory usage (with/without cache)
-   - First token latency
-   - Subsequent token latency
-   - Speedup factor
-5. Document findings in `docs/KVCACHE_BENCHMARK.md`
+1. Implement `export_shared_architecture_with_cache()` method in `trigoRL/exportOnnx.py`
+2. Create `CachedONNXWrapper` class to flatten cache I/O for ONNX
+3. Add `--with-cache` CLI flag to export script
+4. Export two ONNX models:
+   - `base_model.onnx` (no cache) - existing functionality
+   - `base_model_cached.onnx` (with cache) - new cached version
+5. Validate exported models with onnxruntime:
+   - Test cache mode correctness
+   - Verify cache tensor shapes
+   - Measure inference speedup
 
 **Success Criteria**:
-- ✅ GPU tensors persist across multiple inference calls
-- ✅ Zero CPU-GPU copies for cache
-- ✅ Measured speedup >10× for token generation
-- ✅ Memory overhead matches theoretical calculations
+- ✅ Both ONNX models load successfully in onnxruntime
+- ✅ Cached model produces numerically equivalent results
+- ✅ Cache tensors have correct shapes (per layer)
+- ✅ Measured speedup >2× for MCTS use case (prefix reuse)
 
-**Priority**: High (validate research findings with real implementation)
+**Priority**: High (unlocks C++ integration)
 
 ---
 
@@ -382,9 +419,10 @@ io_binding.BindOutput("present_key_cache", memory_info);
 
 ---
 
-**Last Updated**: December 5, 2025
+**Last Updated**: December 6, 2025
 **Current Status**:
 - Phase 4 MCTS Benchmarking complete - C++ CPU is 5.47× faster than TypeScript
-- Phase 5 KV Cache research complete - Design validated, ready for prototyping
+- Phase 5.1 KV Cache Python core complete - All tests passing (12/12)
+- Phase 5.2 ONNX export in progress
 **Production Ready**: C++ MCTS with CPU execution is production-ready for large-scale self-play data generation
-**Next Step**: Phase 5.1 - KV Cache prototype implementation and performance testing
+**Next Step**: Phase 5.2 - ONNX export implementation with KV cache support
