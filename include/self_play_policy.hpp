@@ -22,6 +22,7 @@
 #include "prefix_tree_builder.hpp"
 #include "tgn_tokenizer.hpp"
 #include "mcts.hpp"          // AlphaZero MCTS (for PolicyAction, MCTSNode)
+#include "cached_mcts.hpp"   // CachedMCTS (AlphaZero MCTS with prefix cache)
 #include "mcts_moc.hpp"      // Pure MCTS with random rollouts (for MCTSPolicy)
 #include <vector>
 #include <random>
@@ -779,6 +780,34 @@ private:
 
 
 /**
+ * CachedMCTSPolicy - Adapter for CachedMCTS
+ *
+ * Wraps CachedMCTS to conform to IPolicy interface
+ */
+class CachedMCTSPolicy : public IPolicy
+{
+private:
+	std::shared_ptr<CachedMCTS> mcts;
+
+public:
+	explicit CachedMCTSPolicy(std::shared_ptr<CachedMCTS> m)
+		: mcts(m)
+	{
+	}
+
+	PolicyAction select_action(const TrigoGame& game) override
+	{
+		return mcts->search(game);
+	}
+
+	std::string name() const override
+	{
+		return "CachedMCTS";
+	}
+};
+
+
+/**
  * Policy Factory
  *
  * Creates policies from configuration
@@ -834,12 +863,38 @@ public:
 		}
 		else if (type == "cached-alphazero")
 		{
-			// Cached AlphaZero with shared cache for policy + value (3-5× faster)
+			// Cached AlphaZero with shared cache for policy + value
+			// Note: Simplified implementation (no tree search, proof of concept)
 			if (model_path.empty())
 			{
 				throw std::runtime_error("Cached AlphaZero policy requires model_path");
 			}
 			return std::make_unique<CachedAlphaZeroPolicy>(model_path, 50, 1.0f, seed);
+		}
+		else if (type == "cached-mcts")
+		{
+			// Full MCTS with shared prefix cache (3-4× faster than standard MCTS)
+			// Uses PrefixCacheInferencer for both policy and value evaluation
+			if (model_path.empty())
+			{
+				throw std::runtime_error("CachedMCTS policy requires model_path");
+			}
+
+			// Create PrefixCacheInferencer
+			auto inferencer = std::make_shared<PrefixCacheInferencer>(
+				model_path + "/base_model_prefix.onnx",
+				model_path + "/base_model_eval_cached.onnx",
+				model_path + "/policy_head.onnx",
+				model_path + "/value_head.onnx",
+				false,  // CPU mode (GPU can be enabled later)
+				0
+			);
+
+			// Create CachedMCTS with 50 simulations
+			auto cached_mcts = std::make_shared<CachedMCTS>(inferencer, 50, 1.0f, seed);
+
+			// Wrap in IPolicy adapter
+			return std::make_unique<CachedMCTSPolicy>(cached_mcts);
 		}
 		else if (type == "hybrid")
 		{
