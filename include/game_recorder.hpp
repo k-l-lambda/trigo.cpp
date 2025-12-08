@@ -194,6 +194,20 @@ public:
 		}
 
 		// Add final score comment
+		// If last move was black's, replace trailing space with newline
+		if (!record.steps.empty() && record.steps.back().player == Stone::Black)
+		{
+			// Remove the trailing space added in the loop
+			std::string result = tgn.str();
+			if (!result.empty() && result.back() == ' ')
+			{
+				result.pop_back();
+				tgn.str(result);
+				tgn.seekp(0, std::ios::end);
+			}
+			tgn << "\n";
+		}
+
 		int score_diff = record.final_territory.black - record.final_territory.white;
 		std::string sign = score_diff > 0 ? "-" : score_diff < 0 ? "+" : "";
 		tgn << "; " << sign << std::abs(score_diff) << "\n";

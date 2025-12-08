@@ -10,6 +10,7 @@ This project implements production-ready tools for Trigo AI development:
 - 🚀 **ONNX Runtime Integration**: CPU and GPU inference with trained models
 - 🎯 **AlphaZero MCTS**: Value network evaluation (255× faster than random rollouts)
 - 🔧 **Self-Play Generator**: Command-line tool for training data generation
+- 🎲 **Random Board Selection**: 220 candidate shapes (2D and 3D) for diverse training
 - ✅ **Cross-Language Validation**: 100% compatibility with TypeScript reference
 - 📦 **Multiple Policies**: Random, Neural, Pure MCTS, AlphaZero MCTS
 - 📊 **TGN Format**: Compatible with TrigoRL training pipeline
@@ -45,9 +46,35 @@ make -j$(nproc)
 
 #### Self-Play Data Generation
 
-**Generate games with MCTS (recommended for training):**
+**Generate games with random board shapes (recommended for training):**
 ```bash
-# AlphaZero-style MCTS with value network - RECOMMENDED
+# Random board selection from 220 candidates (2D: 2-13×1-13×1, 3D: 2-5×2-5×2-5)
+# This creates a diverse dataset covering various board sizes
+export TRIGO_FORCE_CPU=1
+
+./self_play_generator \
+    --num-games 100 \
+    --random-board \
+    --black-policy mcts \
+    --white-policy mcts \
+    --model ../models/trained_shared \
+    --output /path/to/data/mcts_games \
+    --seed 42
+
+# With custom board ranges (e.g., small 2D boards only)
+./self_play_generator \
+    --num-games 100 \
+    --random-board \
+    --board-ranges "3-9x3-9x1-1,2-3x2-3x2-2" \
+    --black-policy mcts \
+    --white-policy mcts \
+    --model ../models/trained_shared \
+    --output /path/to/data/mcts_games
+```
+
+**Generate games with fixed board size:**
+```bash
+# AlphaZero-style MCTS with value network on 5×5×5 board
 # Force CPU for best performance (1.52× faster than GPU for batch=1 MCTS)
 export TRIGO_FORCE_CPU=1
 
@@ -85,6 +112,16 @@ export TRIGO_FORCE_CPU=1
 
 **Generate baseline games with random policy:**
 ```bash
+# Random policy with random board shapes
+./self_play_generator \
+    --num-games 10000 \
+    --random-board \
+    --black-policy random \
+    --white-policy random \
+    --output /path/to/data/random_games \
+    --seed 42
+
+# Random policy with fixed board
 ./self_play_generator \
     --num-games 10000 \
     --board 5x5x5 \
@@ -93,6 +130,50 @@ export TRIGO_FORCE_CPU=1
     --output /path/to/data/random_games \
     --seed 42
 ```
+
+#### Board Shape Options
+
+The generator supports two modes for board shape selection:
+
+**Fixed Board (--board):**
+```bash
+--board 5x5x5    # Fixed 5×5×5 board for all games
+--board 9x9x1    # Fixed 9×9×1 (2D) board for all games
+--board 13x13x1  # Fixed 13×13 (traditional Go size)
+```
+
+**Random Board (--random-board):**
+```bash
+--random-board   # Randomly select from 220 candidate shapes per game
+```
+
+The random board mode uses default ranges:
+- **2D boards**: 2-13×1-13×1 (156 shapes)
+- **3D boards**: 2-5×2-5×2-5 (64 shapes)
+- **Total**: 220 candidate shapes
+
+**Custom Board Ranges (--board-ranges):**
+
+You can specify custom ranges with `--board-ranges` (requires `--random-board`):
+
+```bash
+# Format: "minX-maxXxminY-maxYxminZ-maxZ,..."
+--random-board --board-ranges "2-13x1-13x1-1,2-5x2-5x2-5"  # Default (220 shapes)
+--random-board --board-ranges "3-9x3-9x1-1"                 # Small 2D boards only
+--random-board --board-ranges "2-3x2-3x2-3"                 # Tiny 3D boards only
+--random-board --board-ranges "5-5x5-5x5-5,9-9x9-9x1-1"    # Mix of 5×5×5 and 9×9
+```
+
+**Range Format**: `minX-maxXxminY-maxYxminZ-maxZ`
+- Multiple ranges can be comma-separated
+- Each range generates all combinations within bounds
+- Example: `2-3x2-3x1-1` generates: 2×2×1, 2×3×1, 3×2×1, 3×3×1 (4 shapes)
+
+Random board selection is recommended for training diverse models that generalize across board sizes.
+
+**Parameter Rules**:
+- `--board` and `--random-board` are mutually exclusive
+- `--board-ranges` requires `--random-board`
 
 #### Policy Options
 
@@ -162,6 +243,7 @@ Models are exported from TrigoRL using `exportOnnx.py`.
 │  │   ├─ AlphaZero MCTS (PUCT, value network) - Production   │
 │  │   └─ Pure MCTS (UCB1, random rollouts) - Reference       │
 │  ├─ Self-Play Generator (data generation tool)               │
+│  │   ├─ Random Board Selection (220 candidates)              │
 │  │   ├─ RandomPolicy                                         │
 │  │   ├─ NeuralPolicy (ONNX inference)                        │
 │  │   ├─ MCTSPolicy (Pure MCTS)                               │
@@ -182,6 +264,7 @@ trigo.cpp/
 │   ├── trigo_game.hpp               # 3D Go game engine
 │   ├── trigo_coords.hpp             # ab0yz coordinate system
 │   ├── trigo_game_utils.hpp         # Capture, Ko, territory
+│   ├── board_shape_candidates.hpp   # Random board shape generation
 │   ├── mcts.hpp                     # AlphaZero MCTS (value network)
 │   ├── mcts_moc.hpp                 # Pure MCTS (random rollouts)
 │   ├── self_play_policy.hpp         # Policy interfaces
