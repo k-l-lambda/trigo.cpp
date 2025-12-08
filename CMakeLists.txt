@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(USE_CUDA "Enable CUDA support" OFF)
 
 # Optional profiling
-option(ENABLE_MCTS_PROFILING "Enable MCTS profiling output" ON)
+option(ENABLE_MCTS_PROFILING "Enable MCTS profiling output" OFF)
 
 if(USE_CUDA)
 	enable_language(CUDA)
@@ -31,11 +31,12 @@ else()
 	# Try multiple locations for CPU-only ONNX Runtime
 	set(ONNXRUNTIME_SEARCH_PATHS
 		"${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-1.17.0"
+		"${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-gpu-1.17.0"
 		"/usr/local"
 		"/usr"
 	)
 	foreach(SEARCH_PATH ${ONNXRUNTIME_SEARCH_PATHS})
-		if(EXISTS "${SEARCH_PATH}/include/onnxruntime")
+		if(EXISTS "${SEARCH_PATH}/include/onnxruntime_c_api.h")
 			set(ONNXRUNTIME_ROOT_DIR "${SEARCH_PATH}")
 			break()
 		endif()

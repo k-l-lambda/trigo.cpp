@@ -545,26 +545,8 @@ private:
 			// Apply softmax to get priors
 			auto priors = softmax(move_logits);
 
-			// Post-process: Apply moderate penalty to PASS to discourage early passing
-			// (Policy network may not have learned proper PASS timing)
-			if (include_pass && !priors.empty())
-			{
-				// Reduce PASS probability by 10× (redistribute to other moves)
-				size_t pass_idx = priors.size() - 1;
-				float pass_prob = priors[pass_idx];
-				priors[pass_idx] = pass_prob * 0.1f;
-
-				// Redistribute the removed probability to other moves
-				float removed_prob = pass_prob * 0.9f;
-				if (priors.size() > 1)
-				{
-					float boost_per_move = removed_prob / (priors.size() - 1);
-					for (size_t i = 0; i < priors.size() - 1; i++)
-					{
-						priors[i] += boost_per_move;
-					}
-				}
-			}
+			// Use model output directly without modification
+			// Trust the trained policy network to decide when to pass
 
 			return priors;
 		}

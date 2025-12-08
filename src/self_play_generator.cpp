@@ -10,6 +10,7 @@
  */
 
 #include "../include/trigo_game.hpp"
+#include "../include/trigo_coords.hpp"
 #include "../include/self_play_policy.hpp"
 #include "../include/game_recorder.hpp"
 #include <iostream>
@@ -139,15 +140,34 @@ private:
 
 		// Play game
 		int move_count = 0;
+		std::cout << "\n[Game " << game_id << "] ";
+		std::cout.flush();
+
 		while (game.is_game_active() && move_count < config.max_moves)
 		{
 			// Get current player's policy
-			IPolicy* current_policy = game.get_current_player() == Stone::Black
+			Stone current_player = game.get_current_player();
+			IPolicy* current_policy = current_player == Stone::Black
 			                          ? black.get()
 			                          : white.get();
 
 			// Select action
 			PolicyAction action = current_policy->select_action(game);
+
+			// Format move notation
+			std::string move_str;
+			if (action.is_pass)
+			{
+				move_str = "Pass";
+			}
+			else
+			{
+				move_str = encode_ab0yz(action.position, game.get_shape());
+			}
+
+			// Print move on same line (like TypeScript version)
+			std::cout << move_str << " ";
+			std::cout.flush();
 
 			// Execute action
 			bool success;
@@ -162,13 +182,15 @@ private:
 
 			if (!success)
 			{
-				std::cerr << "Warning: Invalid action in game " << game_id
+				std::cerr << "\nWarning: Invalid action in game " << game_id
 				          << " at move " << move_count << std::endl;
 				break;
 			}
 
 			move_count++;
 		}
+
+		std::cout << "\n[Game " << game_id << "] Finished after " << move_count << " moves" << std::endl;
 
 		// Record game
 		SelfPlayRecord record = GameRecorder::record_game(
