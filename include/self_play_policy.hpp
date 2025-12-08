@@ -731,6 +731,14 @@ public:
 			// STEP 2: Evaluate value using cached inference
 			float value = inferencer->value_inference_with_cache(3);  // VALUE token ID = 3
 
+			// IMPORTANT: Value model outputs White advantage (positive = White winning)
+			// Convert to current player's perspective for confidence calculation
+			Stone current_player = game.get_current_player();
+			if (current_player == Stone::Black)
+			{
+				value = -value;
+			}
+
 			// Simple greedy selection: return first valid move
 			// (In full MCTS, this would do tree search with value guidance)
 			std::uniform_int_distribution<size_t> dist(0, valid_moves.size() - 1);

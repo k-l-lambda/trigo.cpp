@@ -23,6 +23,7 @@
 #include "prefix_tree_builder.hpp"
 #include "tgn_utils.hpp"
 #include "mcts.hpp"  // For MCTSNode and PolicyAction
+#include <iomanip>   // For std::setprecision
 #include <vector>
 #include <memory>
 #include <cmath>
@@ -192,6 +193,19 @@ public:
 		          << (static_cast<float>(total_elapsed) / num_simulations) << "ms\n";
 #endif
 
+		// Debug: Print visit counts for all children
+#ifdef MCTS_ENABLE_PROFILING
+		std::cout << "\n[CachedMCTS] Child visit counts after search:\n";
+		for (const auto& child : root->children)
+		{
+			std::string move_name = child->is_pass ? "PASS" : encode_ab0yz(child->move, game.get_shape());
+			std::cout << "  " << move_name << ": visits=" << child->visit_count
+			          << ", prior=" << std::fixed << std::setprecision(6) << child->prior_prob
+			          << ", Q=" << child->q_value() << "\n";
+		}
+		std::cout << std::endl;
+#endif
+
 		// Select best move by visit count (most robust)
 		return select_best_child();
 	}
@@ -346,6 +360,16 @@ private:
 		{
 			// Use cached value inference (reuses root cache)
 			float value = inferencer->value_inference_with_cache(3);  // VALUE token
+
+			// IMPORTANT: Value model outputs White advantage (positive = White winning)
+			// But MCTS needs value from current player's perspective
+			// If current player is Black, we need to negate the value
+			Stone current_player = game.get_current_player();
+			if (current_player == Stone::Black)
+			{
+				value = -value;
+			}
+
 			return value;
 		}
 		catch (const std::exception& e)

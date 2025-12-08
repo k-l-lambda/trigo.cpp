@@ -437,7 +437,18 @@ private:
 		try
 		{
 			auto values = inferencer->value_inference(tokens, 1, seq_len, 3);
-			return values[0];
+			float value = values[0];
+
+			// IMPORTANT: Value model outputs White advantage (positive = White winning)
+			// But MCTS needs value from current player's perspective
+			// If current player is Black, we need to negate the value
+			Stone current_player = game.get_current_player();
+			if (current_player == Stone::Black)
+			{
+				value = -value;
+			}
+
+			return value;
 		}
 		catch (const std::exception& e)
 		{

@@ -422,6 +422,36 @@ set_target_properties(test_policy_comparison PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test policy and value validation
+add_executable(test_policy_value_validation tests/test_policy_value_validation.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_policy_value_validation PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_policy_value_validation PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_policy_value_validation PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test C++ vs TypeScript comparison
+add_executable(test_compare_with_ts tests/test_compare_with_ts.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_compare_with_ts PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_compare_with_ts PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_compare_with_ts PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
