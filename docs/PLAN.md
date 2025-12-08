@@ -511,10 +511,11 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
    - Implementation: 60 lines
 
 2. **Created `CachedAlphaZeroPolicy` class** (`self_play_policy.hpp`)
+   - **Note**: Simplified implementation (NOT full MCTS, just proof of concept)
+   - Uses value-based greedy selection (no tree search, no simulations)
    - Demonstrates shared cache usage between policy and value heads
    - Integrated with PolicyFactory (type="cached-alphazero")
    - Supports GPU with automatic CPU fallback
-   - Simplified implementation (proof of concept, not full MCTS yet)
 
 3. **Comprehensive Testing**:
    - `test_cached_alphazero_policy.cpp` - Integration validation
@@ -559,7 +560,8 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
 - ✅ Integration with PolicyFactory
 - ✅ Comprehensive performance validation
 - ✅ Cache sharing validated (no additional memory overhead)
-- ⏭️ Full MCTS integration (future work)
+- ⚠️ **Limitation**: Current CachedAlphaZeroPolicy is simplified (no tree search)
+- ⏭️ **Next Step**: Full MCTS integration required for production AlphaZero (see `docs/FULL_MCTS_CACHE_TODO.md`)
 
 ---
 
