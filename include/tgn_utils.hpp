@@ -11,6 +11,7 @@
 #include "trigo_coords.hpp"
 #include <string>
 #include <sstream>
+#include <iostream>
 
 
 namespace trigo
@@ -98,6 +99,20 @@ inline std::string game_to_tgn(const TrigoGame& game, bool include_result = fals
 	// Add final score comment if requested
 	if (include_result)
 	{
+		// If last move was black's, replace trailing space with newline
+		if (!steps.empty() && steps.back().player == Stone::Black)
+		{
+			// Remove the trailing space added in the loop and add newline
+			std::string result = tgn.str();
+			if (!result.empty() && result.back() == ' ')
+			{
+				result.pop_back();
+				tgn.str(result);
+				tgn.seekp(0, std::ios::end);
+			}
+			tgn << "\n";
+		}
+
 		// Need non-const game to call get_territory
 		auto game_copy = const_cast<TrigoGame&>(game);
 		auto territory = game_copy.get_territory();
