@@ -76,6 +76,7 @@ endif()
 set(TRIGO_INFERENCE_SOURCES
     src/tgn_tokenizer.cpp
     src/shared_model_inferencer.cpp
+    src/prefix_cache_inferencer.cpp
     # src/prefix_tree_builder.cpp
 )
 
@@ -138,6 +139,20 @@ if(USE_CUDA)
 	target_link_libraries(test_shared_model_inferencer PRIVATE CUDA::cudart)
 endif()
 set_target_properties(test_shared_model_inferencer PROPERTIES
+    BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+    INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test executable for prefix cache inferencer
+add_executable(test_prefix_cache_inferencer tests/test_prefix_cache_inferencer.cpp)
+target_link_libraries(test_prefix_cache_inferencer PRIVATE
+    trigo_inference
+    ${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_prefix_cache_inferencer PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_prefix_cache_inferencer PROPERTIES
     BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
     INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
