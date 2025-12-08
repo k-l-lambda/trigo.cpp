@@ -322,6 +322,21 @@ set_target_properties(benchmark_dynamic_shapes PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test CachedNeuralPolicy integration
+add_executable(test_cached_neural_policy tests/test_cached_neural_policy.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_cached_neural_policy PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_cached_neural_policy PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_cached_neural_policy PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
