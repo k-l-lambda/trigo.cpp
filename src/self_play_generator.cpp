@@ -12,6 +12,7 @@
 #include "../include/trigo_game.hpp"
 #include "../include/self_play_policy.hpp"
 #include "../include/game_recorder.hpp"
+#include "../include/board_shape_candidates.hpp"
 #include <iostream>
 #include <string>
 #include <filesystem>
@@ -29,6 +30,8 @@ struct SelfPlayConfig
 {
 	// Game settings
 	BoardShape board_shape{5, 5, 5};
+	bool random_board{false};  // Enable random board selection
+	std::string board_ranges{"2-13x1-13x1-1,2-5x2-5x2-5"};  // Default ranges (220 candidates)
 	int max_moves{500};
 
 	// Policy settings
@@ -58,6 +61,7 @@ class SelfPlayGenerator
 {
 private:
 	SelfPlayConfig config;
+	std::vector<BoardShape> board_candidates;  // Pre-generated board shape candidates
 	int games_completed;
 	int total_moves;
 	std::chrono::steady_clock::time_point start_time;
@@ -70,6 +74,19 @@ public:
 	{
 		// Create output directory
 		fs::create_directories(config.output_dir);
+
+		// Generate board shape candidates if random mode is enabled
+		if (config.random_board)
+		{
+			board_candidates = generate_shapes_from_ranges(config.board_ranges);
+			if (board_candidates.empty())
+			{
+				std::cerr << "Warning: No valid board shapes generated from ranges: "
+				          << config.board_ranges << std::endl;
+				std::cerr << "Falling back to default ranges" << std::endl;
+				board_candidates = generate_default_board_shapes();
+			}
+		}
 	}
 
 	/**
@@ -78,9 +95,17 @@ public:
 	void generate()
 	{
 		std::cout << "=== Trigo Self-Play Data Generator ===" << std::endl;
-		std::cout << "Board: " << config.board_shape.x << "x"
-		          << config.board_shape.y << "x"
-		          << config.board_shape.z << std::endl;
+		if (config.random_board)
+		{
+			std::cout << "Board: Random (" << board_candidates.size() << " candidates)" << std::endl;
+			std::cout << "  Ranges: " << config.board_ranges << std::endl;
+		}
+		else
+		{
+			std::cout << "Board: " << config.board_shape.x << "x"
+			          << config.board_shape.y << "x"
+			          << config.board_shape.z << std::endl;
+		}
 		std::cout << "Games: " << config.num_games << std::endl;
 		std::cout << "Black Policy: " << config.black_policy << std::endl;
 		std::cout << "White Policy: " << config.white_policy << std::endl;
@@ -109,8 +134,22 @@ private:
 	 */
 	void generate_one_game(int game_id)
 	{
-		// Create game
-		TrigoGame game(config.board_shape);
+		// Select board shape (fixed or random)
+		BoardShape actual_shape = config.board_shape;
+
+		if (config.random_board)
+		{
+			// Create separate RNG for board shape selection
+			int seed = config.random_seed >= 0
+			           ? config.random_seed + game_id * 1000000  // Large offset to avoid policy RNG collision
+			           : std::random_device{}() + game_id;
+
+			std::mt19937 shape_rng(seed);
+			actual_shape = select_random_board_shape(board_candidates, shape_rng);
+		}
+
+		// Create game with selected board shape
+		TrigoGame game(actual_shape);
 		game.start_game();
 
 		// Create policies
@@ -240,6 +279,10 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			       &config.board_shape.y,
 			       &config.board_shape.z);
 		}
+		else if (arg == "--random-board")
+		{
+			config.random_board = true;
+		}
 		else if (arg == "--black-policy" && i + 1 < argc)
 		{
 			config.black_policy = argv[++i];
@@ -270,6 +313,7 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "Options:\n";
 			std::cout << "  --num-games N       Number of games to generate (default: 100)\n";
 			std::cout << "  --board WxHxD       Board dimensions (default: 5x5x5)\n";
+			std::cout << "  --random-board      Enable random board selection (220 candidates)\n";
 			std::cout << "  --black-policy P    Black player policy (random/mcts/neural)\n";
 			std::cout << "  --white-policy P    White player policy (random/mcts/neural)\n";
 			std::cout << "  --model PATH        Path to ONNX model for neural policy\n";
@@ -278,6 +322,17 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "  --seed N            Random seed (default: random)\n";
 			std::cout << "  --help              Show this help message\n";
 			std::exit(0);
+		}
+	}
+
+	// Validate mutual exclusivity of --board and --random-board
+	if (config.random_board)
+	{
+		// Check if --board was explicitly set (non-default value)
+		if (config.board_shape.x != 5 || config.board_shape.y != 5 || config.board_shape.z != 5)
+		{
+			std::cerr << "Error: Cannot specify both --board and --random-board" << std::endl;
+			std::exit(1);
 		}
 	}
 
