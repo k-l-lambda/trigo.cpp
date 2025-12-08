@@ -36,6 +36,10 @@ struct SelfPlayConfig
 	std::string white_policy{"random"};
 	std::string model_path{""};
 
+	// MCTS settings
+	int mcts_simulations{50};
+	float mcts_c_puct{1.0f};
+
 	// Generation settings
 	int num_games{100};
 	int num_threads{1};
@@ -118,8 +122,20 @@ private:
 		           ? config.random_seed + game_id
 		           : -1;
 
-		auto black = PolicyFactory::create(config.black_policy, config.model_path, seed);
-		auto white = PolicyFactory::create(config.white_policy, config.model_path, seed + 1);
+		auto black = PolicyFactory::create(
+			config.black_policy,
+			config.model_path,
+			seed,
+			config.mcts_simulations,
+			config.mcts_c_puct
+		);
+		auto white = PolicyFactory::create(
+			config.white_policy,
+			config.model_path,
+			seed + 1,
+			config.mcts_simulations,
+			config.mcts_c_puct
+		);
 
 		// Play game
 		int move_count = 0;
@@ -264,19 +280,29 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 		{
 			config.random_seed = std::stoi(argv[++i]);
 		}
+		else if (arg == "--mcts-simulations" && i + 1 < argc)
+		{
+			config.mcts_simulations = std::stoi(argv[++i]);
+		}
+		else if (arg == "--mcts-c-puct" && i + 1 < argc)
+		{
+			config.mcts_c_puct = std::stof(argv[++i]);
+		}
 		else if (arg == "--help" || arg == "-h")
 		{
 			std::cout << "Usage: self_play_generator [options]\n";
 			std::cout << "Options:\n";
-			std::cout << "  --num-games N       Number of games to generate (default: 100)\n";
-			std::cout << "  --board WxHxD       Board dimensions (default: 5x5x5)\n";
-			std::cout << "  --black-policy P    Black player policy (random/mcts/neural)\n";
-			std::cout << "  --white-policy P    White player policy (random/mcts/neural)\n";
-			std::cout << "  --model PATH        Path to ONNX model for neural policy\n";
-			std::cout << "  --output DIR        Output directory (default: ./selfplay_data)\n";
-			std::cout << "  --max-moves N       Max moves per game (default: 500)\n";
-			std::cout << "  --seed N            Random seed (default: random)\n";
-			std::cout << "  --help              Show this help message\n";
+			std::cout << "  --num-games N          Number of games to generate (default: 100)\n";
+			std::cout << "  --board WxHxD          Board dimensions (default: 5x5x5)\n";
+			std::cout << "  --black-policy P       Black player policy (random/mcts/alphazero/cached-mcts)\n";
+			std::cout << "  --white-policy P       White player policy (random/mcts/alphazero/cached-mcts)\n";
+			std::cout << "  --model PATH           Path to ONNX model for neural policy\n";
+			std::cout << "  --output DIR           Output directory (default: ./selfplay_data)\n";
+			std::cout << "  --max-moves N          Max moves per game (default: 500)\n";
+			std::cout << "  --seed N               Random seed (default: random)\n";
+			std::cout << "  --mcts-simulations N   MCTS simulations per move (default: 50)\n";
+			std::cout << "  --mcts-c-puct F        MCTS exploration constant (default: 1.0)\n";
+			std::cout << "  --help                 Show this help message\n";
 			std::exit(0);
 		}
 	}

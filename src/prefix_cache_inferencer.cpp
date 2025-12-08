@@ -535,4 +535,58 @@ std::vector<float> PrefixCacheInferencer::expand_mask_to_batch(
 }
 
 
+std::vector<float> PrefixCacheInferencer::policy_inference_from_hidden(
+	const std::vector<float>& hidden_states,
+	int batch_size,
+	int seq_len,
+	int hidden_dim
+)
+{
+	// Create input tensor for policy head
+	Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+
+	std::vector<int64_t> hidden_shape = {batch_size, seq_len, hidden_dim};
+
+	// Make a mutable copy of hidden_states for CreateTensor
+	std::vector<float> hidden_copy = hidden_states;
+
+	Ort::Value hidden_tensor = Ort::Value::CreateTensor<float>(
+		memory_info,
+		hidden_copy.data(),
+		hidden_copy.size(),
+		hidden_shape.data(),
+		hidden_shape.size()
+	);
+
+	// Prepare input/output names
+	std::vector<const char*> input_names = {"hidden_states"};
+	std::vector<const char*> output_names = {"logits"};
+
+	// Prepare inputs
+	std::vector<Ort::Value> inputs;
+	inputs.push_back(std::move(hidden_tensor));
+
+	// Run policy head
+	auto outputs = policy_session_->Run(
+		Ort::RunOptions{nullptr},
+		input_names.data(),
+		inputs.data(),
+		inputs.size(),
+		output_names.data(),
+		output_names.size()
+	);
+
+	// Extract logits
+	float* logits_ptr = outputs[0].GetTensorMutableData<float>();
+	auto logits_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+	int output_seq_len = logits_shape[1];
+	int vocab_size = logits_shape[2];
+
+	size_t logits_size = batch_size * output_seq_len * vocab_size;
+	std::vector<float> logits(logits_ptr, logits_ptr + logits_size);
+
+	return logits;
+}
+
+
 }  // namespace trigo

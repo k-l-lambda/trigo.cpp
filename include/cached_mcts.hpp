@@ -478,26 +478,26 @@ private:
 	)
 	{
 		// Build token sequences for each candidate move
-		auto prefix_tokens = game_to_tokens(game);
+		// IMPORTANT: Only include move tokens, NOT prefix (prefix is already in cache)
+		auto prefix_tokens = game_to_tokens(game);  // Used for cache, not for tree
 		auto board_shape = game.get_shape();
 		std::vector<std::vector<int64_t>> candidate_sequences;
 
-		// Add regular moves
+		// Add regular moves (ONLY move tokens, not prefix)
 		for (const auto& move : unexpanded_moves)
 		{
-			std::vector<int64_t> seq = prefix_tokens;
 			std::string coord = encode_ab0yz(move, board_shape);
 			auto move_tokens = tokenizer.encode(coord, 2048, false, false, false, false);
-			seq.insert(seq.end(), move_tokens.begin(), move_tokens.end());
+			// Create sequence with ONLY move tokens
+			std::vector<int64_t> seq(move_tokens.begin(), move_tokens.end());
 			candidate_sequences.push_back(seq);
 		}
 
-		// Add pass if needed
+		// Add pass if needed (ONLY "PASS" tokens, not prefix)
 		if (include_pass)
 		{
-			std::vector<int64_t> seq = prefix_tokens;
 			auto pass_tokens = tokenizer.encode("PASS", 2048, false, false, false, false);
-			seq.insert(seq.end(), pass_tokens.begin(), pass_tokens.end());
+			std::vector<int64_t> seq(pass_tokens.begin(), pass_tokens.end());
 			candidate_sequences.push_back(seq);
 		}
 
@@ -516,9 +516,17 @@ private:
 				tree_structure.num_nodes
 			);
 
-			// Run policy head to get logits
-			// We need to extract the hidden states for each leaf position
-			int hidden_dim = static_cast<int>(hidden_states.size()) / (1 * tree_structure.num_nodes);
+			// Run policy head to get proper logits
+			int hidden_dim = static_cast<int>(hidden_states.size()) / tree_structure.num_nodes;
+			auto logits = inferencer->policy_inference_from_hidden(
+				hidden_states,
+				1,  // batch_size
+				tree_structure.num_nodes,
+				hidden_dim
+			);
+
+			// Extract logits for each candidate move
+			int vocab_size = static_cast<int>(logits.size()) / tree_structure.num_nodes;
 			std::vector<float> move_logits;
 
 			for (size_t i = 0; i < candidate_sequences.size(); i++)
@@ -527,20 +535,38 @@ private:
 				const auto& move_seq = candidate_sequences[i];
 				int64_t last_token = move_seq.back();
 
-				// For simplicity, we'll use a heuristic based on hidden state magnitude
-				// TODO: Properly run policy head with hidden states to get token logits
-				float score = 0.0f;
-				for (int d = 0; d < hidden_dim; d++)
-				{
-					int idx = leaf_pos * hidden_dim + d;
-					score += std::abs(hidden_states[idx]);
-				}
-				score /= hidden_dim;
-				move_logits.push_back(score);
+				// Get logit for the last token at this leaf position
+				int logit_idx = leaf_pos * vocab_size + static_cast<int>(last_token);
+				float logit = logits[logit_idx];
+
+				move_logits.push_back(logit);
 			}
 
 			// Apply softmax to get priors
-			return softmax(move_logits);
+			auto priors = softmax(move_logits);
+
+			// Post-process: Apply moderate penalty to PASS to discourage early passing
+			// (Policy network may not have learned proper PASS timing)
+			if (include_pass && !priors.empty())
+			{
+				// Reduce PASS probability by 10× (redistribute to other moves)
+				size_t pass_idx = priors.size() - 1;
+				float pass_prob = priors[pass_idx];
+				priors[pass_idx] = pass_prob * 0.1f;
+
+				// Redistribute the removed probability to other moves
+				float removed_prob = pass_prob * 0.9f;
+				if (priors.size() > 1)
+				{
+					float boost_per_move = removed_prob / (priors.size() - 1);
+					for (size_t i = 0; i < priors.size() - 1; i++)
+					{
+						priors[i] += boost_per_move;
+					}
+				}
+			}
+
+			return priors;
 		}
 		catch (const std::exception& e)
 		{

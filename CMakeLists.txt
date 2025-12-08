@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Optional CUDA support
 option(USE_CUDA "Enable CUDA support" OFF)
 
+# Optional profiling
+option(ENABLE_MCTS_PROFILING "Enable MCTS profiling output" ON)
+
 if(USE_CUDA)
 	enable_language(CUDA)
 	set(CMAKE_CUDA_STANDARD 17)
@@ -70,6 +73,12 @@ if(USE_CUDA)
 	set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -arch=sm_75")  # RTX 2060+, adjust as needed
 	set(CMAKE_CUDA_FLAGS_DEBUG "${CMAKE_CUDA_FLAGS_DEBUG} -g -G -O0")
 	set(CMAKE_CUDA_FLAGS_RELEASE "${CMAKE_CUDA_FLAGS_RELEASE} -O3")
+endif()
+
+# MCTS profiling (optional)
+if(ENABLE_MCTS_PROFILING)
+	add_compile_definitions(MCTS_ENABLE_PROFILING)
+	message(STATUS "MCTS profiling enabled")
 endif()
 
 # Source files (will be added as we implement)
@@ -393,6 +402,21 @@ if(USE_CUDA)
 	target_link_libraries(test_cached_mcts PRIVATE CUDA::cudart)
 endif()
 set_target_properties(test_cached_mcts PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test policy inference comparison (C++ vs TypeScript)
+add_executable(test_policy_comparison tests/test_policy_comparison.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_policy_comparison PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_policy_comparison PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_policy_comparison PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )

@@ -155,6 +155,26 @@ public:
 
 
 	/**
+	 * Run policy head on hidden states
+	 *
+	 * Takes hidden states from base model and runs policy head to get logits.
+	 * This is needed for proper move evaluation in MCTS.
+	 *
+	 * @param hidden_states Hidden states [batch, seq_len, hidden_dim]
+	 * @param batch_size Batch size
+	 * @param seq_len Sequence length
+	 * @param hidden_dim Hidden dimension
+	 * @return Policy logits [batch, seq_len, vocab_size]
+	 */
+	std::vector<float> policy_inference_from_hidden(
+		const std::vector<float>& hidden_states,
+		int batch_size,
+		int seq_len,
+		int hidden_dim
+	);
+
+
+	/**
 	 * Combined inference (for comparison/baseline)
 	 *
 	 * Runs standard model without cache optimization.

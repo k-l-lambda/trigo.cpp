@@ -818,7 +818,9 @@ public:
 	static std::unique_ptr<IPolicy> create(
 		const std::string& type,
 		const std::string& model_path = "",
-		int seed = -1
+		int seed = -1,
+		int mcts_simulations = 50,
+		float mcts_c_puct = 1.0f
 	)
 	{
 		if (seed < 0)
@@ -850,7 +852,7 @@ public:
 		else if (type == "mcts")
 		{
 			// Pure MCTS with random rollouts (slow, for testing only)
-			return std::make_unique<MCTSPolicy>(50, 1.414f, seed);
+			return std::make_unique<MCTSPolicy>(mcts_simulations, mcts_c_puct, seed);
 		}
 		else if (type == "alphazero")
 		{
@@ -859,7 +861,7 @@ public:
 			{
 				throw std::runtime_error("AlphaZero policy requires model_path");
 			}
-			return std::make_unique<AlphaZeroPolicy>(model_path, 50, seed);
+			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed);
 		}
 		else if (type == "cached-alphazero")
 		{
@@ -869,7 +871,7 @@ public:
 			{
 				throw std::runtime_error("Cached AlphaZero policy requires model_path");
 			}
-			return std::make_unique<CachedAlphaZeroPolicy>(model_path, 50, 1.0f, seed);
+			return std::make_unique<CachedAlphaZeroPolicy>(model_path, mcts_simulations, 1.0f, seed);
 		}
 		else if (type == "cached-mcts")
 		{
@@ -890,8 +892,8 @@ public:
 				0
 			);
 
-			// Create CachedMCTS with 50 simulations
-			auto cached_mcts = std::make_shared<CachedMCTS>(inferencer, 50, 1.0f, seed);
+			// Create CachedMCTS with configurable simulations and c_puct
+			auto cached_mcts = std::make_shared<CachedMCTS>(inferencer, mcts_simulations, mcts_c_puct, seed);
 
 			// Wrap in IPolicy adapter
 			return std::make_unique<CachedMCTSPolicy>(cached_mcts);
