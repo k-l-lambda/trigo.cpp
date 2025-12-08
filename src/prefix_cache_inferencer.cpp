@@ -355,6 +355,69 @@ std::vector<float> PrefixCacheInferencer::evaluate_with_cache(
 }
 
 
+float PrefixCacheInferencer::value_inference_with_cache(int value_token_id)
+{
+	if (!cache_ready_) {
+		throw std::runtime_error("Cache not ready. Call compute_prefix_cache() first.");
+	}
+
+	if (!value_session_) {
+		throw std::runtime_error("Value head not loaded. Provide value_head_path in constructor.");
+	}
+
+	// 1. Create VALUE token input [1, 1]
+	std::vector<int64_t> value_ids = {value_token_id};
+	std::vector<float> value_mask = {1.0f};  // Single token, trivial mask
+
+	// 2. Get hidden states using cached inference
+	auto hidden_states = evaluate_with_cache(value_ids, value_mask, 1, 1);
+
+	// hidden_states shape: [1, 1, hidden_dim]
+	int hidden_dim = static_cast<int>(hidden_states.size());
+
+	// 3. Run value head: hidden_states → value
+	Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(
+		OrtArenaAllocator, OrtMemTypeDefault);
+
+	// Value head expects [batch, hidden_dim] (rank 2), not [batch, seq_len, hidden_dim]
+	// We only have one token, so just reshape to [1, hidden_dim]
+	std::vector<int64_t> hidden_shape = {1, hidden_dim};
+	auto hidden_tensor = Ort::Value::CreateTensor<float>(
+		memory_info,
+		hidden_states.data(),
+		hidden_states.size(),
+		hidden_shape.data(),
+		hidden_shape.size()
+	);
+
+	// Get input/output names
+	auto input_name_ptr = value_session_->GetInputNameAllocated(0, allocator_);
+	const char* input_names[] = {input_name_ptr.get()};
+
+	auto output_name_ptr = value_session_->GetOutputNameAllocated(0, allocator_);
+	const char* output_names[] = {output_name_ptr.get()};
+
+	// Run value head
+	std::vector<Ort::Value> input_tensors;
+	input_tensors.push_back(std::move(hidden_tensor));
+
+	auto output_tensors = value_session_->Run(
+		Ort::RunOptions{nullptr},
+		input_names,
+		input_tensors.data(),
+		input_tensors.size(),
+		output_names,
+		1
+	);
+
+	// Get value output [1, 1]
+	auto& value_tensor = output_tensors[0];
+	auto value_data = value_tensor.GetTensorData<float>();
+
+	return value_data[0];  // Single value prediction
+}
+
+
 std::vector<float> PrefixCacheInferencer::evaluate_standard(
 	const std::vector<int64_t>& prefix_ids,
 	const std::vector<int64_t>& evaluated_ids,

@@ -337,6 +337,51 @@ set_target_properties(test_cached_neural_policy PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test CachedAlphaZeroPolicy integration (Phase 5.7)
+add_executable(test_cached_alphazero_policy tests/test_cached_alphazero_policy.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_cached_alphazero_policy PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_cached_alphazero_policy PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_cached_alphazero_policy PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Benchmark value inference with cache (Phase 5.7)
+add_executable(benchmark_value_cache tests/benchmark_value_cache.cpp)
+target_link_libraries(benchmark_value_cache PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(benchmark_value_cache PRIVATE CUDA::cudart)
+endif()
+set_target_properties(benchmark_value_cache PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Simplified value cache benchmark
+add_executable(benchmark_value_cache_simple tests/benchmark_value_cache_simple.cpp)
+target_link_libraries(benchmark_value_cache_simple PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(benchmark_value_cache_simple PRIVATE CUDA::cudart)
+endif()
+set_target_properties(benchmark_value_cache_simple PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)

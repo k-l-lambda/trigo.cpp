@@ -132,7 +132,7 @@ public:
 	 * @param evaluated_mask Tree attention mask [batch, eval_len, eval_len]
 	 * @param batch_size Batch size
 	 * @param eval_len Evaluated sequence length
-	 * @return Policy logits [batch, eval_len+1, vocab_size]
+	 * @return Hidden states [batch, eval_len, hidden_dim]
 	 */
 	std::vector<float> evaluate_with_cache(
 		const std::vector<int64_t>& evaluated_ids,
@@ -140,6 +140,18 @@ public:
 		int batch_size,
 		int eval_len
 	);
+
+
+	/**
+	 * Value inference with cache (for MCTS leaf evaluation)
+	 *
+	 * Uses the same fixed cache as policy inference.
+	 * Evaluates a single VALUE token to get position value.
+	 *
+	 * @param value_token_id Token ID for VALUE (default: 3)
+	 * @return Value estimation [-1, 1] from current player perspective
+	 */
+	float value_inference_with_cache(int value_token_id = 3);
 
 
 	/**
