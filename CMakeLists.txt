@@ -277,6 +277,21 @@ set_target_properties(test_neural_policy_inference PROPERTIES
 add_executable(test_tgn_consistency tests/test_tgn_consistency.cpp)
 target_link_libraries(test_tgn_consistency PRIVATE trigo_game)
 
+# Test prefix cache correctness (vs standard inference)
+add_executable(test_prefix_cache_correctness tests/test_prefix_cache_correctness.cpp)
+target_link_libraries(test_prefix_cache_correctness PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_prefix_cache_correctness PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_prefix_cache_correctness PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
