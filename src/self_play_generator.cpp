@@ -283,6 +283,10 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 		{
 			config.random_board = true;
 		}
+		else if (arg == "--board-ranges" && i + 1 < argc)
+		{
+			config.board_ranges = argv[++i];
+		}
 		else if (arg == "--black-policy" && i + 1 < argc)
 		{
 			config.black_policy = argv[++i];
@@ -313,7 +317,11 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "Options:\n";
 			std::cout << "  --num-games N       Number of games to generate (default: 100)\n";
 			std::cout << "  --board WxHxD       Board dimensions (default: 5x5x5)\n";
-			std::cout << "  --random-board      Enable random board selection (220 candidates)\n";
+			std::cout << "  --random-board      Enable random board selection\n";
+			std::cout << "  --board-ranges R    Custom board ranges for random selection\n";
+			std::cout << "                      Format: \"minX-maxXxminY-maxYxminZ-maxZ,...\"\n";
+			std::cout << "                      Example: \"2-13x1-13x1-1,2-5x2-5x2-5\"\n";
+			std::cout << "                      Default: \"2-13x1-13x1-1,2-5x2-5x2-5\" (220 candidates)\n";
 			std::cout << "  --black-policy P    Black player policy (random/mcts/neural)\n";
 			std::cout << "  --white-policy P    White player policy (random/mcts/neural)\n";
 			std::cout << "  --model PATH        Path to ONNX model for neural policy\n";
@@ -325,13 +333,22 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 		}
 	}
 
-	// Validate mutual exclusivity of --board and --random-board
+	// Validate parameter combinations
 	if (config.random_board)
 	{
 		// Check if --board was explicitly set (non-default value)
 		if (config.board_shape.x != 5 || config.board_shape.y != 5 || config.board_shape.z != 5)
 		{
 			std::cerr << "Error: Cannot specify both --board and --random-board" << std::endl;
+			std::exit(1);
+		}
+	}
+	else
+	{
+		// Check if --board-ranges was specified without --random-board
+		if (config.board_ranges != "2-13x1-13x1-1,2-5x2-5x2-5")
+		{
+			std::cerr << "Error: --board-ranges requires --random-board" << std::endl;
 			std::exit(1);
 		}
 	}

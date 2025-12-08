@@ -60,6 +60,16 @@ export TRIGO_FORCE_CPU=1
     --model ../models/trained_shared \
     --output /path/to/data/mcts_games \
     --seed 42
+
+# With custom board ranges (e.g., small 2D boards only)
+./self_play_generator \
+    --num-games 100 \
+    --random-board \
+    --board-ranges "3-9x3-9x1-1,2-3x2-3x2-2" \
+    --black-policy mcts \
+    --white-policy mcts \
+    --model ../models/trained_shared \
+    --output /path/to/data/mcts_games
 ```
 
 **Generate games with fixed board size:**
@@ -137,14 +147,33 @@ The generator supports two modes for board shape selection:
 --random-board   # Randomly select from 220 candidate shapes per game
 ```
 
-The random board mode selects from:
+The random board mode uses default ranges:
 - **2D boards**: 2-13×1-13×1 (156 shapes)
 - **3D boards**: 2-5×2-5×2-5 (64 shapes)
 - **Total**: 220 candidate shapes
 
+**Custom Board Ranges (--board-ranges):**
+
+You can specify custom ranges with `--board-ranges` (requires `--random-board`):
+
+```bash
+# Format: "minX-maxXxminY-maxYxminZ-maxZ,..."
+--random-board --board-ranges "2-13x1-13x1-1,2-5x2-5x2-5"  # Default (220 shapes)
+--random-board --board-ranges "3-9x3-9x1-1"                 # Small 2D boards only
+--random-board --board-ranges "2-3x2-3x2-3"                 # Tiny 3D boards only
+--random-board --board-ranges "5-5x5-5x5-5,9-9x9-9x1-1"    # Mix of 5×5×5 and 9×9
+```
+
+**Range Format**: `minX-maxXxminY-maxYxminZ-maxZ`
+- Multiple ranges can be comma-separated
+- Each range generates all combinations within bounds
+- Example: `2-3x2-3x1-1` generates: 2×2×1, 2×3×1, 3×2×1, 3×3×1 (4 shapes)
+
 Random board selection is recommended for training diverse models that generalize across board sizes.
 
-**Note**: `--board` and `--random-board` are mutually exclusive.
+**Parameter Rules**:
+- `--board` and `--random-board` are mutually exclusive
+- `--board-ranges` requires `--random-board`
 
 #### Policy Options
 

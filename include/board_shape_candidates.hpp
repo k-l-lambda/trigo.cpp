@@ -15,6 +15,7 @@
 #include <random>
 #include <string>
 #include <sstream>
+#include <iostream>
 
 
 namespace trigo
