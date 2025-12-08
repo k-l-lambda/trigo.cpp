@@ -198,11 +198,11 @@
 
 ---
 
-### Phase 5: KV Cache Optimization ✅ Phase 5.1 Complete, Phase 5.2 In Progress
+### Phase 5: KV Cache Optimization ✅ Phase 5.1-5.2 Complete
 
 **Goal**: Implement Prefix KV Cache for BaseModelWithTreeAttention to accelerate MCTS inference
 
-**Status**: Python core implementation complete (December 6, 2025)
+**Status**: Python implementation and ONNX export complete (December 6, 2025)
 
 **Research Findings** (documented in `docs/KVCACHE_DESIGN.md`):
 
@@ -261,14 +261,15 @@ io_binding.BindOutput("present_key_cache", memory_info);
 
 **Current Tasks**:
 
-- [ ] **Phase 5.2: ONNX Export Implementation** (IN PROGRESS)
-  - [ ] Implement `export_shared_architecture_with_cache()` method
-  - [ ] Create `CachedONNXWrapper` for flat cache I/O
-  - [ ] Add `--with-cache` CLI flag to exportOnnx.py
-  - [ ] Export two ONNX models (base_model.onnx + base_model_cached.onnx)
-  - [ ] Validate exported models with onnxruntime
+- ✅ **Phase 5.2: ONNX Export Implementation** (COMPLETE - December 6, 2025)
+  - ✅ Integrated cache export into `export_shared_architecture()` with `with_cache` parameter
+  - ✅ Created `CachedONNXWrapper` for flat cache I/O (flattens nested tuple to ONNX-compatible format)
+  - ✅ Added `--with-cache` CLI flag to exportOnnx.py
+  - ✅ Export functionality: 3 models (no cache) or 4 models (with cache: base_model_cached.onnx)
+  - ✅ Validated with onnxruntime: test_kvcache_export_simple.py passes (13.55 MB model, 0.64 ms/iter)
+  - ✅ Implementation: Unified into export_shared_architecture() instead of separate function
 
-- [ ] **Phase 5.3: Performance Benchmarking**
+- [ ] **Phase 5.3: Performance Benchmarking** (NEXT)
   - [ ] Measure speedup in Python (target: 2-5× for MCTS use case)
   - [ ] Validate numerical accuracy
   - [ ] Test different prefix/evaluated lengths
@@ -323,29 +324,25 @@ io_binding.BindOutput("present_key_cache", memory_info);
 
 ## Current Tasks
 
-### Next: Phase 5.2 - ONNX Export Implementation
+### Next: Phase 5.3 - Performance Benchmarking
 
-**Goal**: Export BaseModelWithTreeAttention with KV cache support to ONNX format
+**Goal**: Measure KV cache speedup with actual trained trigoRL models
 
 **Tasks**:
-1. Implement `export_shared_architecture_with_cache()` method in `trigoRL/exportOnnx.py`
-2. Create `CachedONNXWrapper` class to flatten cache I/O for ONNX
-3. Add `--with-cache` CLI flag to export script
-4. Export two ONNX models:
-   - `base_model.onnx` (no cache) - existing functionality
-   - `base_model_cached.onnx` (with cache) - new cached version
-5. Validate exported models with onnxruntime:
-   - Test cache mode correctness
-   - Verify cache tensor shapes
-   - Measure inference speedup
+1. Export trained models from training_output with `--with-cache` flag
+2. Create benchmark script comparing cache vs non-cache inference
+3. Measure speedup for MCTS use case (prefix reuse with multiple evaluated sequences)
+4. Validate numerical accuracy between cached and non-cached models
+5. Test different prefix/evaluated length ratios
+6. Document results in `docs/KVCACHE_BENCHMARK.md`
 
 **Success Criteria**:
-- ✅ Both ONNX models load successfully in onnxruntime
-- ✅ Cached model produces numerically equivalent results
-- ✅ Cache tensors have correct shapes (per layer)
-- ✅ Measured speedup >2× for MCTS use case (prefix reuse)
+- ✅ Speedup >2× for MCTS prefix reuse pattern
+- ✅ Numerical accuracy within tolerance (1e-4 relative error)
+- ✅ Works with different model architectures (GPT2, LLAMA, etc.)
+- ✅ Documented performance characteristics
 
-**Priority**: High (unlocks C++ integration)
+**Priority**: High (validates the KV cache optimization effectiveness)
 
 ---
 
@@ -423,6 +420,7 @@ io_binding.BindOutput("present_key_cache", memory_info);
 **Current Status**:
 - Phase 4 MCTS Benchmarking complete - C++ CPU is 5.47× faster than TypeScript
 - Phase 5.1 KV Cache Python core complete - All tests passing (12/12)
-- Phase 5.2 ONNX export in progress
+- Phase 5.2 ONNX export complete - Validated with onnxruntime (test_kvcache_export_simple.py)
+- Phase 5.3 Performance benchmarking next
 **Production Ready**: C++ MCTS with CPU execution is production-ready for large-scale self-play data generation
-**Next Step**: Phase 5.2 - ONNX export implementation with KV cache support
+**Next Step**: Phase 5.3 - Performance benchmarking with actual trained trigoRL models
