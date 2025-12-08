@@ -292,6 +292,36 @@ set_target_properties(test_prefix_cache_correctness PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test cached inference with real game
+add_executable(test_cached_inference_game tests/test_cached_inference_game.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_cached_inference_game PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_cached_inference_game PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_cached_inference_game PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Benchmark dynamic shape performance
+add_executable(benchmark_dynamic_shapes tests/benchmark_dynamic_shapes.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(benchmark_dynamic_shapes PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(benchmark_dynamic_shapes PRIVATE CUDA::cudart)
+endif()
+set_target_properties(benchmark_dynamic_shapes PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
