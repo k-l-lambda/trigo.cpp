@@ -452,6 +452,36 @@ set_target_properties(test_compare_with_ts PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test MCTS from specific prefix
+add_executable(test_mcts_prefix tests/test_mcts_prefix.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_mcts_prefix PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_mcts_prefix PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_mcts_prefix PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test equivalence between prefix cache and tree models
+add_executable(test_cache_vs_tree_equivalence tests/test_cache_vs_tree_equivalence.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_cache_vs_tree_equivalence PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_cache_vs_tree_equivalence PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_cache_vs_tree_equivalence PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
