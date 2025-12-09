@@ -6,6 +6,7 @@
 
 #include "../include/prefix_tree_builder.hpp"
 #include <algorithm>
+#include <unordered_map>
 
 
 namespace trigo
@@ -75,20 +76,33 @@ std::vector<PrefixTreeBuilder::TreeNode*> PrefixTreeBuilder::build_recursive(
 	int parent_pos
 )
 {
-	// Group sequences by first token
-	std::map<int64_t, std::vector<Sequence>> groups;
+	// Group sequences by first token - PRESERVE INSERTION ORDER to match TypeScript
+	// Use vector of pairs instead of map to maintain order
+	std::vector<std::pair<int64_t, std::vector<Sequence>>> groups;
+	std::unordered_map<int64_t, size_t> token_to_index;
 
 	for (const auto& s : seqs)
 	{
 		if (s.tokens.empty()) continue;
 
 		int64_t first_token = s.tokens[0];
-		groups[first_token].push_back(s);
+		auto it = token_to_index.find(first_token);
+		if (it == token_to_index.end())
+		{
+			// New token, add new group
+			token_to_index[first_token] = groups.size();
+			groups.push_back({first_token, {s}});
+		}
+		else
+		{
+			// Existing token, append to group
+			groups[it->second].second.push_back(s);
+		}
 	}
 
 	std::vector<TreeNode*> level_nodes;
 
-	// Create node for each unique first token
+	// Create node for each unique first token (in insertion order)
 	for (const auto& [token, group] : groups)
 	{
 		int pos = next_pos_++;

@@ -520,6 +520,25 @@ set_target_properties(test_mcts_full_search PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test 3D board tree building
+add_executable(test_tree_build_3d tests/test_tree_build_3d.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_tree_build_3d PRIVATE trigo_game trigo_inference)
+
+# Test MCTS single step consistency (C++ vs TypeScript)
+add_executable(test_mcts_single_step tests/test_mcts_single_step.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_mcts_single_step PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_mcts_single_step PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_mcts_single_step PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
@@ -547,3 +566,14 @@ message(STATUS "  C++ compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "  CUDA compiler: ${CMAKE_CUDA_COMPILER}")
 message(STATUS "  ONNX Runtime: ${ONNXRUNTIME_LIB}")
 message(STATUS "")
+
+add_executable(test_tree_build_5x5 tests/test_tree_build_5x5.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_tree_build_5x5 PRIVATE trigo_game trigo_inference)
+
+# KV cache comparison test
+add_executable(test_kv_cache_comparison tests/test_kv_cache_comparison.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_kv_cache_comparison PRIVATE trigo_game trigo_inference ${ONNXRUNTIME_LIB})
+set_target_properties(test_kv_cache_comparison PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
