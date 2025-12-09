@@ -486,14 +486,15 @@ private:
 	/**
 	 * Get policy priors for unexpanded moves using cached inference
 	 *
-	 * NOTE: This reuses the root cache, so priors are approximate for
-	 * positions that have diverged from root. This is a speed-accuracy
-	 * trade-off that's acceptable for MCTS.
+	 * Implements the same scoring algorithm as TypeScript TrigoTreeAgent.scoreMoves:
+	 * - Builds complete path from root to leaf using parent array
+	 * - Accumulates log probabilities along the path
+	 * - Converts to probabilities via exp and normalization
 	 *
 	 * @param game Current game state
 	 * @param unexpanded_moves List of unexpanded move positions
 	 * @param include_pass Whether to include pass in the evaluation
-	 * @return Prior probabilities for each move (softmax-normalized)
+	 * @return Prior probabilities for each move
 	 */
 	std::vector<float> get_move_priors(
 		const TrigoGame& game,
@@ -502,10 +503,9 @@ private:
 	)
 	{
 		// Build token sequences for each candidate move
-		// IMPORTANT: Only include move tokens, NOT prefix (prefix is already in cache)
-		auto prefix_tokens = game_to_tokens(game);  // Used for cache, not for tree
 		auto board_shape = game.get_shape();
 		std::vector<std::vector<int64_t>> candidate_sequences;
+		std::vector<std::string> move_notations;  // Store original notations
 
 		// Add regular moves (ONLY move tokens, not prefix)
 		// CRITICAL: Exclude last token (following TypeScript trigoTreeAgent.ts:226-227)
@@ -514,7 +514,9 @@ private:
 			std::string coord = encode_ab0yz(move, board_shape);
 			auto move_tokens = tokenizer.encode(coord, 2048, false, false, false, false);
 
-			// Exclude the last token (TypeScript: tokens = fullTokens.slice(0, fullTokens.length - 1))
+			move_notations.push_back(coord);
+
+			// Exclude the last token
 			if (!move_tokens.empty())
 			{
 				std::vector<int64_t> seq(move_tokens.begin(), move_tokens.end() - 1);
@@ -522,13 +524,13 @@ private:
 			}
 		}
 
-		// Add pass if needed (ONLY "PASS" tokens, not prefix)
-		// CRITICAL: Exclude last token
+		// Add pass if needed
+		// Note: TGN format uses "Pass" (capital P, lowercase ass)
 		if (include_pass)
 		{
-			auto pass_tokens = tokenizer.encode("PASS", 2048, false, false, false, false);
+			auto pass_tokens = tokenizer.encode("Pass", 2048, false, false, false, false);
+			move_notations.push_back("Pass");
 
-			// Exclude the last token
 			if (!pass_tokens.empty())
 			{
 				std::vector<int64_t> seq(pass_tokens.begin(), pass_tokens.end() - 1);
@@ -543,7 +545,6 @@ private:
 		try
 		{
 			// Get hidden states using cached evaluation
-			// (reuses root cache computed in search())
 			auto hidden_states = inferencer->evaluate_with_cache(
 				tree_structure.evaluated_ids,
 				tree_structure.evaluated_mask,
@@ -551,7 +552,7 @@ private:
 				tree_structure.num_nodes
 			);
 
-			// Run policy head to get proper logits
+			// Run policy head to get logits
 			int hidden_dim = static_cast<int>(hidden_states.size()) / tree_structure.num_nodes;
 			auto logits = inferencer->policy_inference_from_hidden(
 				hidden_states,
@@ -560,54 +561,98 @@ private:
 				hidden_dim
 			);
 
-			// Extract logits for each candidate move
 			int vocab_size = static_cast<int>(logits.size()) / tree_structure.num_nodes;
-			std::vector<float> move_logits;
+
+			// Score each move by accumulating log probabilities along path
+			// (Following TypeScript TrigoTreeAgent.scoreMoves:336-445)
+			const float MIN_PROB = 1e-10f;  // Minimum probability to avoid log(0)
+			std::vector<float> log_scores;
 
 			for (size_t i = 0; i < candidate_sequences.size(); i++)
 			{
 				int leaf_pos = tree_structure.move_to_leaf[i];
-				const auto& move_seq = candidate_sequences[i];
-				int64_t last_token = move_seq.back();
+				float log_prob = 0.0f;
 
-				// Get logit for the last token at this leaf position
-				int logit_idx = leaf_pos * vocab_size + static_cast<int>(last_token);
-				float logit = logits[logit_idx];
+				// Build path from leaf to root, then reverse
+				std::vector<int> path_reverse;
+				int pos = leaf_pos;
+				while (pos != -1)
+				{
+					path_reverse.push_back(pos);
+					pos = tree_structure.parent[pos];
+				}
+				std::reverse(path_reverse.begin(), path_reverse.end());
 
-				move_logits.push_back(logit);
+				// Accumulate log probabilities along path
+				// 1. Root token (predicted from prefix last position, logits[0])
+				if (!path_reverse.empty())
+				{
+					int root_pos = path_reverse[0];
+					int64_t root_token = tree_structure.evaluated_ids[root_pos];
+					auto probs = softmax_at_position(logits, 0, vocab_size);
+					float prob = std::max(probs[root_token], MIN_PROB);
+					log_prob += std::log(prob);
+				}
+
+				// 2. Intermediate transitions (parent→child)
+				for (size_t j = 1; j < path_reverse.size(); j++)
+				{
+					int parent_pos = path_reverse[j - 1];
+					int child_pos = path_reverse[j];
+					int64_t child_token = tree_structure.evaluated_ids[child_pos];
+
+					// Parent output is at logits[parent_pos + 1]
+					int logits_index = parent_pos + 1;
+					auto probs = softmax_at_position(logits, logits_index, vocab_size);
+					float prob = std::max(probs[child_token], MIN_PROB);
+					log_prob += std::log(prob);
+				}
+
+				// 3. Last token (predicted from leaf, excluded from tree)
+				if (!path_reverse.empty())
+				{
+					int leaf = path_reverse.back();
+					const std::string& notation = move_notations[i];
+					int64_t last_token = static_cast<int64_t>(notation.back());
+
+					// Leaf output is at logits[leaf + 1]
+					int logits_index = leaf + 1;
+					auto probs = softmax_at_position(logits, logits_index, vocab_size);
+					float prob = std::max(probs[last_token], MIN_PROB);
+					log_prob += std::log(prob);
+				}
+
+				log_scores.push_back(log_prob);
 			}
 
-			// Apply softmax to get priors
-			auto priors = softmax(move_logits);
+			// Convert log scores to probabilities via exp and normalization
+			std::vector<float> probs = exp_normalize(log_scores);
 
 #ifdef MCTS_ENABLE_PROFILING
-			// Print top 5 moves with logits and priors
-			std::vector<std::pair<size_t, float>> indexed_logits;
-			for (size_t i = 0; i < move_logits.size(); i++) {
-				indexed_logits.push_back({i, move_logits[i]});
+			// Print top 5 moves with log scores and priors
+			std::vector<std::pair<size_t, float>> indexed_scores;
+			for (size_t i = 0; i < log_scores.size(); i++) {
+				indexed_scores.push_back({i, log_scores[i]});
 			}
-			std::sort(indexed_logits.begin(), indexed_logits.end(),
+			std::sort(indexed_scores.begin(), indexed_scores.end(),
 					  [](const auto& a, const auto& b) { return a.second > b.second; });
 
-			std::cout << "  Top 5 moves by logit:" << std::endl;
-			for (size_t i = 0; i < std::min(size_t(5), indexed_logits.size()); i++) {
-				size_t idx = indexed_logits[i].first;
+			std::cout << "  Top 5 moves by log score:" << std::endl;
+			for (size_t i = 0; i < std::min(size_t(5), indexed_scores.size()); i++) {
+				size_t idx = indexed_scores[i].first;
 				std::string move_str;
 				if (idx < unexpanded_moves.size()) {
 					move_str = encode_ab0yz(unexpanded_moves[idx], board_shape);
 				} else {
-					move_str = "PASS";
+					move_str = "Pass";
 				}
 				std::cout << "    " << (i+1) << ". " << move_str
-						  << " logit=" << std::fixed << std::setprecision(6) << move_logits[idx]
-						  << " prior=" << priors[idx] << std::endl;
+						  << " log_score=" << std::fixed << std::setprecision(6) << log_scores[idx]
+						  << " prior=" << probs[idx] << std::endl;
 			}
 #endif
 
-			// Use model output directly without modification
-			// Trust the trained policy network to decide when to pass
-
-			return priors;
+			return probs;
 		}
 		catch (const std::exception& e)
 		{
@@ -642,6 +687,67 @@ private:
 		// Normalize
 		std::vector<float> probs(logits.size());
 		for (size_t i = 0; i < logits.size(); i++)
+		{
+			probs[i] = exp_vals[i] / sum;
+		}
+
+		return probs;
+	}
+
+
+	/**
+	 * Compute softmax for a single position in logits array
+	 *
+	 * @param logits Full logits array [num_positions * vocab_size]
+	 * @param position Position index (0 to num_positions-1)
+	 * @param vocab_size Vocabulary size
+	 * @return Softmax probabilities for all tokens at this position [vocab_size]
+	 */
+	std::vector<float> softmax_at_position(
+		const std::vector<float>& logits,
+		int position,
+		int vocab_size
+	)
+	{
+		// Extract logits for this position
+		int offset = position * vocab_size;
+		std::vector<float> position_logits(vocab_size);
+		for (int i = 0; i < vocab_size; i++)
+		{
+			position_logits[i] = logits[offset + i];
+		}
+
+		// Apply softmax
+		return softmax(position_logits);
+	}
+
+
+	/**
+	 * Convert log scores to normalized probabilities
+	 *
+	 * exp(log_scores) / sum(exp(log_scores))
+	 * Uses log-sum-exp trick for numerical stability
+	 */
+	std::vector<float> exp_normalize(const std::vector<float>& log_scores)
+	{
+		if (log_scores.empty())
+			return {};
+
+		// Find max for numerical stability (log-sum-exp trick)
+		float max_score = *std::max_element(log_scores.begin(), log_scores.end());
+
+		// Compute exp and sum
+		std::vector<float> exp_vals(log_scores.size());
+		float sum = 0.0f;
+		for (size_t i = 0; i < log_scores.size(); i++)
+		{
+			exp_vals[i] = std::exp(log_scores[i] - max_score);
+			sum += exp_vals[i];
+		}
+
+		// Normalize
+		std::vector<float> probs(log_scores.size());
+		for (size_t i = 0; i < log_scores.size(); i++)
 		{
 			probs[i] = exp_vals[i] / sum;
 		}

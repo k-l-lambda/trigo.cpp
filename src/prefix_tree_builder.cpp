@@ -20,6 +20,7 @@ TreeStructure PrefixTreeBuilder::build_tree(const std::vector<std::vector<int64_
 			std::vector<int64_t>(),
 			std::vector<float>(),
 			std::vector<int>(),
+			std::vector<int>(),
 			0,
 			0
 		};
@@ -62,6 +63,7 @@ TreeStructure PrefixTreeBuilder::build_tree(const std::vector<std::vector<int64_
 		std::move(evaluated_ids),
 		std::move(mask),
 		std::move(move_to_leaf),
+		std::move(parent),
 		total,
 		static_cast<int>(token_arrays.size())
 	};

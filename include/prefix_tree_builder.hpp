@@ -36,6 +36,9 @@ struct TreeStructure
 	// Mapping from move index to its leaf position in evaluated_ids
 	std::vector<int> move_to_leaf;       // [num_moves] -> position in evaluated_ids
 
+	// Parent array for path reconstruction
+	std::vector<int> parent;             // [m] parent[i] = parent pos of node i, -1 for root
+
 	// Dimensions
 	int num_nodes;   // m (total nodes in tree)
 	int num_moves;   // number of input moves
