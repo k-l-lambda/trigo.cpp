@@ -467,21 +467,6 @@ set_target_properties(test_mcts_prefix PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
-# Test with corrected ONNX models (fixed attention mask)
-add_executable(test_corrected_models tests/test_corrected_models.cpp)
-target_link_libraries(test_corrected_models PRIVATE
-	trigo_game
-	trigo_inference
-	${ONNXRUNTIME_LIB}
-)
-if(USE_CUDA)
-	target_link_libraries(test_corrected_models PRIVATE CUDA::cudart)
-endif()
-set_target_properties(test_corrected_models PROPERTIES
-	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
-	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
-)
-
 # Test equivalence between prefix cache and tree models
 add_executable(test_cache_vs_tree_equivalence tests/test_cache_vs_tree_equivalence.cpp src/prefix_tree_builder.cpp)
 target_link_libraries(test_cache_vs_tree_equivalence PRIVATE
@@ -493,6 +478,29 @@ if(USE_CUDA)
 	target_link_libraries(test_cache_vs_tree_equivalence PRIVATE CUDA::cudart)
 endif()
 set_target_properties(test_cache_vs_tree_equivalence PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test prefix tree size fix (TypeScript compatibility)
+add_executable(test_tree_size_fix tests/test_tree_size_fix.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_tree_size_fix PRIVATE trigo_game trigo_inference)
+
+# Test evaluated_ids match TypeScript
+add_executable(test_evaluated_ids_match tests/test_evaluated_ids_match.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_evaluated_ids_match PRIVATE trigo_game trigo_inference)
+
+# Test single MCTS simulation (node visit counts)
+add_executable(test_mcts_single_sim tests/test_mcts_single_sim.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_mcts_single_sim PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_mcts_single_sim PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_mcts_single_sim PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )

@@ -508,21 +508,32 @@ private:
 		std::vector<std::vector<int64_t>> candidate_sequences;
 
 		// Add regular moves (ONLY move tokens, not prefix)
+		// CRITICAL: Exclude last token (following TypeScript trigoTreeAgent.ts:226-227)
 		for (const auto& move : unexpanded_moves)
 		{
 			std::string coord = encode_ab0yz(move, board_shape);
 			auto move_tokens = tokenizer.encode(coord, 2048, false, false, false, false);
-			// Create sequence with ONLY move tokens
-			std::vector<int64_t> seq(move_tokens.begin(), move_tokens.end());
-			candidate_sequences.push_back(seq);
+
+			// Exclude the last token (TypeScript: tokens = fullTokens.slice(0, fullTokens.length - 1))
+			if (!move_tokens.empty())
+			{
+				std::vector<int64_t> seq(move_tokens.begin(), move_tokens.end() - 1);
+				candidate_sequences.push_back(seq);
+			}
 		}
 
 		// Add pass if needed (ONLY "PASS" tokens, not prefix)
+		// CRITICAL: Exclude last token
 		if (include_pass)
 		{
 			auto pass_tokens = tokenizer.encode("PASS", 2048, false, false, false, false);
-			std::vector<int64_t> seq(pass_tokens.begin(), pass_tokens.end());
-			candidate_sequences.push_back(seq);
+
+			// Exclude the last token
+			if (!pass_tokens.empty())
+			{
+				std::vector<int64_t> seq(pass_tokens.begin(), pass_tokens.end() - 1);
+				candidate_sequences.push_back(seq);
+			}
 		}
 
 		// Build prefix tree
