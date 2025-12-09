@@ -437,8 +437,8 @@ set_target_properties(test_policy_value_validation PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
-# Test C++ vs TypeScript comparison
-add_executable(test_compare_with_ts tests/test_compare_with_ts.cpp src/prefix_tree_builder.cpp)
+# Test C++ vs TypeScript comparison (uses hardcoded tree structure)
+add_executable(test_compare_with_ts tests/test_compare_with_ts.cpp)
 target_link_libraries(test_compare_with_ts PRIVATE
 	trigo_game
 	trigo_inference
@@ -463,6 +463,21 @@ if(USE_CUDA)
 	target_link_libraries(test_mcts_prefix PRIVATE CUDA::cudart)
 endif()
 set_target_properties(test_mcts_prefix PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test with corrected ONNX models (fixed attention mask)
+add_executable(test_corrected_models tests/test_corrected_models.cpp)
+target_link_libraries(test_corrected_models PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_corrected_models PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_corrected_models PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )

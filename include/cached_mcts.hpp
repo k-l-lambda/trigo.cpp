@@ -569,6 +569,30 @@ private:
 			// Apply softmax to get priors
 			auto priors = softmax(move_logits);
 
+#ifdef MCTS_ENABLE_PROFILING
+			// Print top 5 moves with logits and priors
+			std::vector<std::pair<size_t, float>> indexed_logits;
+			for (size_t i = 0; i < move_logits.size(); i++) {
+				indexed_logits.push_back({i, move_logits[i]});
+			}
+			std::sort(indexed_logits.begin(), indexed_logits.end(),
+					  [](const auto& a, const auto& b) { return a.second > b.second; });
+
+			std::cout << "  Top 5 moves by logit:" << std::endl;
+			for (size_t i = 0; i < std::min(size_t(5), indexed_logits.size()); i++) {
+				size_t idx = indexed_logits[i].first;
+				std::string move_str;
+				if (idx < unexpanded_moves.size()) {
+					move_str = encode_ab0yz(unexpanded_moves[idx], board_shape);
+				} else {
+					move_str = "PASS";
+				}
+				std::cout << "    " << (i+1) << ". " << move_str
+						  << " logit=" << std::fixed << std::setprecision(6) << move_logits[idx]
+						  << " prior=" << priors[idx] << std::endl;
+			}
+#endif
+
 			// Use model output directly without modification
 			// Trust the trained policy network to decide when to pass
 

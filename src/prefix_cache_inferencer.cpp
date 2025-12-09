@@ -188,6 +188,21 @@ void PrefixCacheInferencer::compute_prefix_cache(
 	cached_keys_.clear();
 	cached_values_.clear();
 
+	// DEBUG: Print output tensor information
+	std::cout << "\n=== DEBUG: ONNX Model Outputs ===" << std::endl;
+	std::cout << "Total output tensors: " << output_tensors.size() << std::endl;
+	for (size_t i = 0; i < output_tensors.size(); i++) {
+		auto& tensor = output_tensors[i];
+		auto shape = tensor.GetTensorTypeAndShapeInfo().GetShape();
+		std::cout << "Output " << i << ": name='" << output_names[i] << "', shape=[";
+		for (size_t j = 0; j < shape.size(); j++) {
+			std::cout << shape[j];
+			if (j < shape.size() - 1) std::cout << ", ";
+		}
+		std::cout << "]" << std::endl;
+	}
+	std::cout << "==================================\n" << std::endl;
+
 	for (size_t i = 0; i < output_tensors.size(); i += 2) {
 		// Key tensor
 		auto& key_tensor = output_tensors[i];

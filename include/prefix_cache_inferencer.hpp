@@ -244,6 +244,22 @@ public:
 	void print_model_info() const;
 
 
+	/**
+	 * Get cached key tensors (for debugging/comparison)
+	 */
+	const std::vector<std::vector<float>>& get_cached_keys() const {
+		return cached_keys_;
+	}
+
+
+	/**
+	 * Get cached value tensors (for debugging/comparison)
+	 */
+	const std::vector<std::vector<float>>& get_cached_values() const {
+		return cached_values_;
+	}
+
+
 private:
 	// ONNX Runtime environment and sessions
 	Ort::Env env_;
