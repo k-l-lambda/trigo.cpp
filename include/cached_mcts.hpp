@@ -343,22 +343,23 @@ private:
 
 
 	/**
-	 * Evaluation phase: Use cached value network
+	 * Evaluation phase: Use value network with proper cache
 	 *
-	 * Much faster than standard MCTS because it reuses the root cache
+	 * IMPORTANT: We must recompute cache for the current position!
+	 * Using root cache gives wrong values for diverged positions.
 	 *
 	 * @return Value from perspective of current player in game
 	 */
 	float evaluate_with_cache(TrigoGame& game)
 	{
-		// NOTE: We're reusing the root cache here
-		// This is an approximation - the game state has diverged from root
-		// For full accuracy, we'd need to recompute cache for this position
-		// Trade-off: Speed vs Accuracy
-
 		try
 		{
-			// Use cached value inference (reuses root cache)
+			// Recompute cache for current position
+			auto tokens = game_to_tokens(game);
+			int seq_len = static_cast<int>(tokens.size());
+			inferencer->compute_prefix_cache(tokens, 1, seq_len);
+
+			// Use cached value inference
 			float value = inferencer->value_inference_with_cache(3);  // VALUE token
 
 			// IMPORTANT: Value model outputs White advantage (positive = White winning)
@@ -517,10 +518,16 @@ private:
 			move_notations.push_back(coord);
 
 			// Exclude the last token
-			if (!move_tokens.empty())
+			if (move_tokens.size() > 1)
 			{
 				std::vector<int64_t> seq(move_tokens.begin(), move_tokens.end() - 1);
 				candidate_sequences.push_back(seq);
+			}
+			else
+			{
+				// Single token or empty - add empty sequence
+				// These will be handled specially in scoring (direct prediction from prefix)
+				candidate_sequences.push_back(std::vector<int64_t>());
 			}
 		}
 
@@ -573,53 +580,84 @@ private:
 				int leaf_pos = tree_structure.move_to_leaf[i];
 				float log_prob = 0.0f;
 
-				// Build path from leaf to root, then reverse
-				std::vector<int> path_reverse;
-				int pos = leaf_pos;
-				while (pos != -1)
+				// Handle moves with empty sequences (single-token moves)
+				if (leaf_pos == -1)
 				{
-					path_reverse.push_back(pos);
-					pos = tree_structure.parent[pos];
-				}
-				std::reverse(path_reverse.begin(), path_reverse.end());
-
-				// Accumulate log probabilities along path
-				// 1. Root token (predicted from prefix last position, logits[0])
-				if (!path_reverse.empty())
-				{
-					int root_pos = path_reverse[0];
-					int64_t root_token = tree_structure.evaluated_ids[root_pos];
-					auto probs = softmax_at_position(logits, 0, vocab_size);
-					float prob = std::max(probs[root_token], MIN_PROB);
-					log_prob += std::log(prob);
-				}
-
-				// 2. Intermediate transitions (parent→child)
-				for (size_t j = 1; j < path_reverse.size(); j++)
-				{
-					int parent_pos = path_reverse[j - 1];
-					int child_pos = path_reverse[j];
-					int64_t child_token = tree_structure.evaluated_ids[child_pos];
-
-					// Parent output is at logits[parent_pos + 1]
-					int logits_index = parent_pos + 1;
-					auto probs = softmax_at_position(logits, logits_index, vocab_size);
-					float prob = std::max(probs[child_token], MIN_PROB);
-					log_prob += std::log(prob);
-				}
-
-				// 3. Last token (predicted from leaf, excluded from tree)
-				if (!path_reverse.empty())
-				{
-					int leaf = path_reverse.back();
+					// Direct prediction from prefix (position 0)
 					const std::string& notation = move_notations[i];
-					int64_t last_token = static_cast<int64_t>(notation.back());
+					auto notation_tokens = tokenizer.encode(notation, 2048, false, false, false, false);
+					if (notation_tokens.empty())
+					{
+						log_prob = std::log(MIN_PROB);
+					}
+					else
+					{
+						int64_t token = notation_tokens[0];
+						auto probs = softmax_at_position(logits, 0, vocab_size);
+						float prob = std::max(probs[token], MIN_PROB);
+						log_prob = std::log(prob);
+					}
+				}
+				else
+				{
+					// Build path from leaf to root, then reverse
+					std::vector<int> path_reverse;
+					int pos = leaf_pos;
+					while (pos != -1)
+					{
+						path_reverse.push_back(pos);
+						pos = tree_structure.parent[pos];
+					}
+					std::reverse(path_reverse.begin(), path_reverse.end());
 
-					// Leaf output is at logits[leaf + 1]
-					int logits_index = leaf + 1;
-					auto probs = softmax_at_position(logits, logits_index, vocab_size);
-					float prob = std::max(probs[last_token], MIN_PROB);
-					log_prob += std::log(prob);
+					// Accumulate log probabilities along path
+					// 1. Root token (predicted from prefix last position, logits[0])
+					if (!path_reverse.empty())
+					{
+						int root_pos = path_reverse[0];
+						int64_t root_token = tree_structure.evaluated_ids[root_pos];
+						auto probs = softmax_at_position(logits, 0, vocab_size);
+						float prob = std::max(probs[root_token], MIN_PROB);
+						log_prob += std::log(prob);
+					}
+
+					// 2. Intermediate transitions (parent→child)
+					for (size_t j = 1; j < path_reverse.size(); j++)
+					{
+						int parent_pos = path_reverse[j - 1];
+						int child_pos = path_reverse[j];
+						int64_t child_token = tree_structure.evaluated_ids[child_pos];
+
+						// Parent output is at logits[parent_pos + 1]
+						int logits_index = parent_pos + 1;
+						auto probs = softmax_at_position(logits, logits_index, vocab_size);
+						float prob = std::max(probs[child_token], MIN_PROB);
+						log_prob += std::log(prob);
+					}
+
+					// 3. Last token (predicted from leaf, excluded from tree)
+					if (!path_reverse.empty())
+					{
+						int leaf = path_reverse.back();
+						const std::string& notation = move_notations[i];
+
+						// Tokenize the full notation to get the actual last token ID
+						auto notation_tokens = tokenizer.encode(notation, 2048, false, false, false, false);
+						if (notation_tokens.empty())
+						{
+							log_prob += std::log(MIN_PROB);
+						}
+						else
+						{
+							int64_t last_token = notation_tokens.back();
+
+							// Leaf output is at logits[leaf + 1]
+							int logits_index = leaf + 1;
+							auto probs = softmax_at_position(logits, logits_index, vocab_size);
+							float prob = std::max(probs[last_token], MIN_PROB);
+							log_prob += std::log(prob);
+						}
+					}
 				}
 
 				log_scores.push_back(log_prob);
@@ -734,15 +772,45 @@ private:
 			return {};
 
 		// Find max for numerical stability (log-sum-exp trick)
-		float max_score = *std::max_element(log_scores.begin(), log_scores.end());
+		// Filter out -inf and nan values
+		float max_score = -std::numeric_limits<float>::infinity();
+		for (float score : log_scores)
+		{
+			if (std::isfinite(score) && score > max_score)
+			{
+				max_score = score;
+			}
+		}
+
+		// If all scores are -inf or nan, return uniform distribution
+		if (!std::isfinite(max_score))
+		{
+			size_t n = log_scores.size();
+			return std::vector<float>(n, 1.0f / n);
+		}
 
 		// Compute exp and sum
 		std::vector<float> exp_vals(log_scores.size());
 		float sum = 0.0f;
 		for (size_t i = 0; i < log_scores.size(); i++)
 		{
-			exp_vals[i] = std::exp(log_scores[i] - max_score);
+			// Handle -inf and nan: treat as 0 probability
+			if (std::isfinite(log_scores[i]))
+			{
+				exp_vals[i] = std::exp(log_scores[i] - max_score);
+			}
+			else
+			{
+				exp_vals[i] = 0.0f;
+			}
 			sum += exp_vals[i];
+		}
+
+		// Safety check: if sum is 0 or nan, return uniform
+		if (sum <= 0.0f || !std::isfinite(sum))
+		{
+			size_t n = log_scores.size();
+			return std::vector<float>(n, 1.0f / n);
 		}
 
 		// Normalize

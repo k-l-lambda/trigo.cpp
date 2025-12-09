@@ -505,6 +505,21 @@ set_target_properties(test_mcts_single_sim PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test full MCTS search (C++ vs TypeScript comparison)
+add_executable(test_mcts_full_search tests/test_mcts_full_search.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_mcts_full_search PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_mcts_full_search PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_mcts_full_search PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # Python bindings (will be added later with pybind11)
 # find_package(pybind11 REQUIRED)
 # pybind11_add_module(cuda_mcts_inference src/bindings.cpp)
