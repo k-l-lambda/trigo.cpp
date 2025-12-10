@@ -141,6 +141,10 @@ private:
 	int num_simulations;
 	float c_puct;  // Exploration constant for PUCT formula
 
+	// Dirichlet noise parameters (for root exploration)
+	float dirichlet_alpha;    // Alpha parameter (default: 0.03 for Go-like games)
+	float dirichlet_epsilon;  // Noise mixing weight (default: 0.25)
+
 	// Neural network components
 	std::shared_ptr<SharedModelInferencer> inferencer;
 	TGNTokenizer tokenizer;
@@ -153,10 +157,14 @@ public:
 		std::shared_ptr<SharedModelInferencer> inf,
 		int num_sims = 800,
 		float exploration = 1.0f,
-		int seed = 42
+		int seed = 42,
+		float dir_alpha = 0.03f,
+		float dir_epsilon = 0.25f
 	)
 		: num_simulations(num_sims)
 		, c_puct(exploration)
+		, dirichlet_alpha(dir_alpha)
+		, dirichlet_epsilon(dir_epsilon)
 		, inferencer(inf)
 		, rng(seed)
 	{
@@ -174,6 +182,8 @@ public:
 		// Create root node
 		root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false);
 		root->visit_count = 1;  // Root is always visited
+
+		bool dirichlet_applied = false;  // Track if Dirichlet noise has been added
 
 #ifdef MCTS_ENABLE_PROFILING
 		std::cout << "[AlphaZero MCTS] Starting search with " << num_simulations << " simulations\n";
@@ -212,6 +222,14 @@ public:
 			if (game_copy.is_game_active() && node->visit_count > 0)
 			{
 				node = expand(node, game_copy);
+
+				// Apply Dirichlet noise to root after first expansion
+				// This ensures all root children exist before adding noise
+				if (!dirichlet_applied && root->is_fully_expanded)
+				{
+					add_dirichlet_noise_to_root();
+					dirichlet_applied = true;
+				}
 			}
 
 #ifdef MCTS_ENABLE_PROFILING
@@ -496,6 +514,108 @@ private:
 		}
 
 		return best;
+	}
+
+
+	/**
+	 * Sample from Gamma distribution using Marsaglia and Tsang method (2000)
+	 * Used for Dirichlet noise generation
+	 *
+	 * @param alpha Shape parameter (must be > 0)
+	 * @return Sample from Gamma(alpha, 1)
+	 */
+	float sample_gamma(float alpha)
+	{
+		if (alpha <= 0.0f)
+		{
+			return 0.0f;
+		}
+
+		// For alpha < 1, use transformation: Gamma(alpha) = Gamma(alpha+1) * U^(1/alpha)
+		if (alpha < 1.0f)
+		{
+			std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+			float u = uniform(rng);
+			return sample_gamma(alpha + 1.0f) * std::pow(u, 1.0f / alpha);
+		}
+
+		// Marsaglia and Tsang's method for alpha >= 1
+		float d = alpha - 1.0f / 3.0f;
+		float c = 1.0f / std::sqrt(9.0f * d);
+
+		std::normal_distribution<float> normal(0.0f, 1.0f);
+		std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+
+		while (true)
+		{
+			float x, v;
+			do
+			{
+				x = normal(rng);
+				v = 1.0f + c * x;
+			}
+			while (v <= 0.0f);
+
+			v = v * v * v;
+			float u = uniform(rng);
+
+			// Fast acceptance check
+			if (u < 1.0f - 0.0331f * x * x * x * x)
+			{
+				return d * v;
+			}
+
+			// Fallback acceptance check
+			if (std::log(u) < 0.5f * x * x + d * (1.0f - v + std::log(v)))
+			{
+				return d * v;
+			}
+		}
+	}
+
+
+	/**
+	 * Add Dirichlet noise to root node's children priors
+	 *
+	 * P(s,a) = (1 - ε) * P(s,a) + ε * η_a
+	 * where η ~ Dir(α)
+	 *
+	 * This encourages exploration at the root during self-play
+	 */
+	void add_dirichlet_noise_to_root()
+	{
+		if (root->children.empty())
+		{
+			return;
+		}
+
+		size_t num_actions = root->children.size();
+
+		// Generate Dirichlet noise by sampling from Gamma distribution
+		std::vector<float> noise(num_actions);
+		float noise_sum = 0.0f;
+
+		for (size_t i = 0; i < num_actions; i++)
+		{
+			noise[i] = sample_gamma(dirichlet_alpha);
+			noise_sum += noise[i];
+		}
+
+		// Handle edge case: if all samples are 0
+		if (noise_sum <= 0.0f)
+		{
+			return;  // Keep original priors
+		}
+
+		// Normalize and mix with original priors
+		for (size_t i = 0; i < num_actions; i++)
+		{
+			float normalized_noise = noise[i] / noise_sum;
+			float original_prior = root->children[i]->prior_prob;
+			root->children[i]->prior_prob =
+				(1.0f - dirichlet_epsilon) * original_prior +
+				dirichlet_epsilon * normalized_noise;
+		}
 	}
 
 
