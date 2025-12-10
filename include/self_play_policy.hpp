@@ -890,14 +890,36 @@ public:
 				throw std::runtime_error("CachedMCTS policy requires model_path");
 			}
 
-			// Create PrefixCacheInferencer
+			// Derive evaluation model path from cache model path
+			// Pattern: /path/to/MODEL_shared_cached/ → /path/to/MODEL_evaluation.onnx
+			std::string eval_model_path;
+			std::string suffix = "_shared_cached";
+			if (model_path.size() > suffix.size())
+			{
+				// Remove trailing slash if present
+				std::string clean_path = model_path;
+				while (!clean_path.empty() && clean_path.back() == '/')
+				{
+					clean_path.pop_back();
+				}
+
+				// Check if path ends with _shared_cached
+				size_t pos = clean_path.rfind(suffix);
+				if (pos != std::string::npos && pos == clean_path.size() - suffix.size())
+				{
+					eval_model_path = clean_path.substr(0, pos) + "_evaluation.onnx";
+				}
+			}
+
+			// Create PrefixCacheInferencer with evaluation model
 			auto inferencer = std::make_shared<PrefixCacheInferencer>(
 				model_path + "/base_model_prefix.onnx",
 				model_path + "/base_model_eval_cached.onnx",
 				model_path + "/policy_head.onnx",
 				model_path + "/value_head.onnx",
 				false,  // CPU mode (GPU can be enabled later)
-				0
+				0,
+				eval_model_path  // Direct evaluation model for accurate value inference
 			);
 
 			// Create CachedMCTS with configurable simulations and c_puct

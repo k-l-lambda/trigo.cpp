@@ -91,6 +91,7 @@ public:
 	 * @param value_head_path Path to value_head.onnx (optional, can be empty)
 	 * @param use_gpu Enable CUDA execution provider
 	 * @param device_id GPU device ID
+	 * @param evaluation_model_path Path to evaluation.onnx for direct value inference (optional)
 	 */
 	PrefixCacheInferencer(
 		const std::string& prefix_model_path,
@@ -98,7 +99,8 @@ public:
 		const std::string& policy_head_path,
 		const std::string& value_head_path = "",
 		bool use_gpu = true,
-		int device_id = 0
+		int device_id = 0,
+		const std::string& evaluation_model_path = ""
 	);
 
 	~PrefixCacheInferencer() = default;
@@ -152,6 +154,30 @@ public:
 	 * @return Value estimation [-1, 1] from current player perspective
 	 */
 	float value_inference_with_cache(int value_token_id = 3);
+
+
+	/**
+	 * Direct value inference using evaluation model
+	 *
+	 * Uses a separate evaluation model that directly processes the full sequence.
+	 * More accurate than value_inference_with_cache for MCTS value estimation.
+	 *
+	 * @param input_ids Full input token IDs [batch, seq_len] with TGN + VALUE token
+	 * @param batch_size Batch size
+	 * @param seq_len Sequence length
+	 * @return Value estimation [-1, 1]
+	 */
+	float value_inference_direct(
+		const std::vector<int64_t>& input_ids,
+		int batch_size,
+		int seq_len
+	);
+
+
+	/**
+	 * Check if evaluation model is loaded
+	 */
+	bool has_evaluation_model() const { return evaluation_session_ != nullptr; }
 
 
 	/**
@@ -269,6 +295,7 @@ private:
 	std::unique_ptr<Ort::Session> eval_cached_session_;
 	std::unique_ptr<Ort::Session> policy_session_;
 	std::unique_ptr<Ort::Session> value_session_;  // Optional
+	std::unique_ptr<Ort::Session> evaluation_session_;  // Direct value inference (optional)
 
 	// Memory allocator
 	Ort::AllocatorWithDefaultOptions allocator_;

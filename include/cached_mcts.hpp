@@ -225,8 +225,11 @@ private:
 				return node;
 			}
 
+			// Get current player BEFORE selecting child
+			bool is_white = (game.get_current_player() == Stone::White);
+
 			// Otherwise, select best child by PUCT
-			node = select_best_puct_child(node);
+			node = select_best_puct_child(node, is_white);
 
 			// Apply move to game
 			if (node->is_pass)
@@ -250,95 +253,98 @@ private:
 	 */
 	MCTSNode* expand(MCTSNode* node, TrigoGame& game)
 	{
-		// Get all valid moves
-		auto valid_moves = game.valid_move_positions();
+		// AlphaZero-style: Expand ALL children at once on first visit
+		// This avoids the prior renormalization issue where the last move gets prior=1.0
 
-		// Pass is always available in Trigo when game is active
-		bool can_pass = game.is_game_active();
-
-		// Find unexpanded moves
-		std::vector<Position> unexpanded_moves;
-		for (const auto& move : valid_moves)
+		// If already expanded, select a child to traverse
+		if (!node->children.empty())
 		{
-			bool already_expanded = false;
-			for (const auto& child : node->children)
+			// Node already has children, select one for traversal
+			// Find an unexpanded child (visit_count == 0)
+			for (auto& child : node->children)
 			{
-				if (!child->is_pass && child->move == move)
+				if (child->visit_count == 0)
 				{
-					already_expanded = true;
-					break;
+					// Apply this move to game
+					if (child->is_pass)
+					{
+						game.pass();
+					}
+					else
+					{
+						game.drop(child->move);
+					}
+					return child.get();
 				}
 			}
-			if (!already_expanded)
-			{
-				unexpanded_moves.push_back(move);
-			}
-		}
 
-		// Check if pass is unexpanded
-		bool pass_unexpanded = can_pass;
-		for (const auto& child : node->children)
-		{
-			if (child->is_pass)
-			{
-				pass_unexpanded = false;
-				break;
-			}
-		}
-
-		// If all moves expanded, mark as fully expanded
-		if (unexpanded_moves.empty() && !pass_unexpanded)
-		{
+			// All children visited at least once, mark as fully expanded
 			node->is_fully_expanded = true;
 			return node;
 		}
 
-		// Get policy priors for unexpanded moves using cached inference
-		std::vector<float> priors = get_move_priors(game, unexpanded_moves, pass_unexpanded);
+		// First visit to this node - expand ALL children at once
+		auto valid_moves = game.valid_move_positions();
+		bool can_pass = game.is_game_active();
 
-		// Select move to expand (using prior-weighted sampling)
-		MCTSNode* new_child = nullptr;
-
-		if (unexpanded_moves.empty() && pass_unexpanded)
+		if (valid_moves.empty() && !can_pass)
 		{
-			// Only pass available
-			float prior = priors[0];  // Pass prior
-			new_child = new MCTSNode(Position{0, 0, 0}, true, node, prior);
-			node->children.push_back(std::unique_ptr<MCTSNode>(new_child));
+			// No moves available
+			node->is_fully_expanded = true;
+			return node;
+		}
+
+		// CRITICAL: Recompute prefix cache for current position before getting priors
+		// The cache may have been invalidated by evaluate_with_cache() in a previous simulation
+		auto current_tokens = game_to_tokens(game);
+		inferencer->compute_prefix_cache(current_tokens, 1, static_cast<int>(current_tokens.size()));
+
+		// Get policy priors for ALL valid moves at once
+		std::vector<float> priors = get_move_priors(game, valid_moves, can_pass);
+
+#ifdef MCTS_ENABLE_PROFILING
+		// Debug: Print Pass prior if included
+		if (can_pass && !priors.empty())
+		{
+			float pass_prior = priors.back();
+			std::cout << "    [expand] Pass prior = " << std::fixed << std::setprecision(6) << pass_prior
+			          << " (total moves = " << priors.size() << ")" << std::endl;
+		}
+#endif
+
+		// Create ALL child nodes with their priors
+		for (size_t i = 0; i < valid_moves.size(); i++)
+		{
+			auto new_node = std::make_unique<MCTSNode>(valid_moves[i], false, node, priors[i]);
+			node->children.push_back(std::move(new_node));
+		}
+
+		// Add Pass node if available
+		if (can_pass)
+		{
+			float pass_prior = priors.back();
+			auto pass_node = std::make_unique<MCTSNode>(Position{0, 0, 0}, true, node, pass_prior);
+			node->children.push_back(std::move(pass_node));
+		}
+
+		// Select the first child (highest prior due to sampling) for traversal
+		// Use prior-weighted sampling to select which child to visit first
+		std::discrete_distribution<size_t> dist(priors.begin(), priors.end());
+		size_t idx = dist(rng);
+
+		MCTSNode* selected_child = node->children[idx].get();
+
+		// Apply selected move to game
+		if (selected_child->is_pass)
+		{
 			game.pass();
 		}
-		else if (!unexpanded_moves.empty())
+		else
 		{
-			// Sample move according to prior probabilities
-			std::discrete_distribution<size_t> dist(priors.begin(), priors.end());
-			size_t idx = dist(rng);
-
-			if (pass_unexpanded && idx == unexpanded_moves.size())
-			{
-				// Selected pass
-				float prior = priors[idx];
-				new_child = new MCTSNode(Position{0, 0, 0}, true, node, prior);
-				node->children.push_back(std::unique_ptr<MCTSNode>(new_child));
-				game.pass();
-			}
-			else
-			{
-				// Selected a move
-				Position move = unexpanded_moves[idx];
-				float prior = priors[idx];
-				new_child = new MCTSNode(move, false, node, prior);
-				node->children.push_back(std::unique_ptr<MCTSNode>(new_child));
-				game.drop(move);
-			}
+			game.drop(selected_child->move);
 		}
 
-		// Check if all moves now expanded
-		if (unexpanded_moves.size() == 1 && !pass_unexpanded)
-		{
-			node->is_fully_expanded = true;
-		}
-
-		return new_child;
+		return selected_child;
 	}
 
 
@@ -348,29 +354,57 @@ private:
 	 * IMPORTANT: We must recompute cache for the current position!
 	 * Using root cache gives wrong values for diverged positions.
 	 *
+	 * Uses direct evaluation model when available (more accurate),
+	 * falls back to cached value inference otherwise.
+	 *
 	 * @return Value from perspective of current player in game
 	 */
 	float evaluate_with_cache(TrigoGame& game)
 	{
 		try
 		{
-			// Recompute cache for current position
+			// Generate TGN tokens for this position
 			auto tokens = game_to_tokens(game);
 			int seq_len = static_cast<int>(tokens.size());
-			inferencer->compute_prefix_cache(tokens, 1, seq_len);
 
-			// Use cached value inference
-			float value = inferencer->value_inference_with_cache(3);  // VALUE token
+			float value;
 
-			// IMPORTANT: Value model outputs White advantage (positive = White winning)
-			// But MCTS needs value from current player's perspective
-			// If current player is Black, we need to negate the value
-			Stone current_player = game.get_current_player();
-			if (current_player == Stone::Black)
+			// Prefer direct evaluation model (more accurate for value inference)
+			if (inferencer->has_evaluation_model())
 			{
-				value = -value;
+				// Build full input sequence: TGN + END token
+				// The evaluation model expects: START + TGN + END (padded to fixed length)
+				const int64_t END_TOKEN = 2;
+				const int64_t PAD_TOKEN = 0;
+				const int SEQ_LEN = 256;  // Fixed sequence length for evaluation model
+
+				std::vector<int64_t> eval_tokens = tokens;  // Already has START token
+				eval_tokens.push_back(END_TOKEN);
+
+				// Pad to fixed length
+				while (eval_tokens.size() < SEQ_LEN)
+				{
+					eval_tokens.push_back(PAD_TOKEN);
+				}
+
+				// Truncate if too long
+				if (eval_tokens.size() > SEQ_LEN)
+				{
+					eval_tokens.resize(SEQ_LEN);
+				}
+
+				value = inferencer->value_inference_direct(eval_tokens, 1, SEQ_LEN);
+			}
+			else
+			{
+				// Fallback to cached value inference
+				inferencer->compute_prefix_cache(tokens, 1, seq_len);
+				value = inferencer->value_inference_with_cache(3);  // VALUE token
 			}
 
+			// Value model outputs White advantage (positive = White winning)
+			// Return white-positive value (no conversion to current player perspective)
+			// The backup phase does NOT flip signs, and PUCT selection handles player perspective
 			return value;
 		}
 		catch (const std::exception& e)
@@ -383,6 +417,9 @@ private:
 
 	/**
 	 * Backpropagation phase: Update statistics up the tree
+	 *
+	 * Uses white-positive value system (no sign flipping)
+	 * All Q values are white-positive throughout the tree
 	 */
 	void backpropagate(MCTSNode* node, float value)
 	{
@@ -391,8 +428,8 @@ private:
 			node->visit_count++;
 			node->total_value += value;
 
-			// Flip value for opponent
-			value = -value;
+			// NO sign flipping - Q values are always white-positive
+			// PUCT selection will handle player perspective
 
 			node = node->parent;
 		}
@@ -401,15 +438,27 @@ private:
 
 	/**
 	 * Select child with best PUCT score
+	 *
+	 * Uses white-positive Q values:
+	 * - White maximizes Q (PUCT = Q + U)
+	 * - Black minimizes Q (PUCT = -Q + U)
+	 *
+	 * @param node Current node
+	 * @param is_white Whether current player is White
 	 */
-	MCTSNode* select_best_puct_child(MCTSNode* node)
+	MCTSNode* select_best_puct_child(MCTSNode* node, bool is_white)
 	{
 		MCTSNode* best = nullptr;
 		float best_score = -std::numeric_limits<float>::infinity();
 
 		for (const auto& child : node->children)
 		{
-			float score = child->puct_score(c_puct);
+			// Calculate PUCT score with player perspective
+			float q = child->q_value();
+			float u = c_puct * child->prior_prob * std::sqrt(node->visit_count) / (1.0f + child->visit_count);
+
+			// Black minimizes Q (flips sign), White maximizes Q
+			float score = (is_white ? q : -q) + u;
 
 			if (score > best_score)
 			{

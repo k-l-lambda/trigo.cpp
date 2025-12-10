@@ -15,7 +15,8 @@ PrefixCacheInferencer::PrefixCacheInferencer(
 	const std::string& policy_head_path,
 	const std::string& value_head_path,
 	bool use_gpu,
-	int device_id
+	int device_id,
+	const std::string& evaluation_model_path
 )
 	: env_(ORT_LOGGING_LEVEL_WARNING, "PrefixCacheInferencer")
 	, use_gpu_(use_gpu)
@@ -88,6 +89,20 @@ PrefixCacheInferencer::PrefixCacheInferencer(
 		}
 	}
 
+	// Load evaluation model (optional, for direct value inference)
+	if (!evaluation_model_path.empty()) {
+		try {
+			#ifdef _WIN32
+			std::wstring eval_path_w(evaluation_model_path.begin(), evaluation_model_path.end());
+			evaluation_session_ = std::make_unique<Ort::Session>(env_, eval_path_w.c_str(), session_options_);
+			#else
+			evaluation_session_ = std::make_unique<Ort::Session>(env_, evaluation_model_path.c_str(), session_options_);
+			#endif
+		} catch (const Ort::Exception& e) {
+			std::cerr << "Warning: Failed to load evaluation model: " << e.what() << std::endl;
+		}
+	}
+
 	// Get cache dimensions from eval_cached model inputs
 	// Expected inputs: evaluated_ids, evaluated_mask, past_key_0, past_value_0, past_key_1, ...
 	size_t num_inputs = eval_cached_session_->GetInputCount();
@@ -129,6 +144,9 @@ PrefixCacheInferencer::PrefixCacheInferencer(
 	std::cout << "  Policy head: " << policy_head_path << std::endl;
 	if (value_session_) {
 		std::cout << "  Value head: " << value_head_path << std::endl;
+	}
+	if (evaluation_session_) {
+		std::cout << "  Evaluation model: " << evaluation_model_path << std::endl;
 	}
 	std::cout << "  Device: " << (use_gpu_ ? "GPU" : "CPU") << std::endl;
 	std::cout << "  Cache dimensions: " << cache_dims_.num_layers << " layers, "
@@ -187,21 +205,6 @@ void PrefixCacheInferencer::compute_prefix_cache(
 	// Output format: cache_key_0, cache_value_0, cache_key_1, cache_value_1, ...
 	cached_keys_.clear();
 	cached_values_.clear();
-
-	// DEBUG: Print output tensor information
-	std::cout << "\n=== DEBUG: ONNX Model Outputs ===" << std::endl;
-	std::cout << "Total output tensors: " << output_tensors.size() << std::endl;
-	for (size_t i = 0; i < output_tensors.size(); i++) {
-		auto& tensor = output_tensors[i];
-		auto shape = tensor.GetTensorTypeAndShapeInfo().GetShape();
-		std::cout << "Output " << i << ": name='" << output_names[i] << "', shape=[";
-		for (size_t j = 0; j < shape.size(); j++) {
-			std::cout << shape[j];
-			if (j < shape.size() - 1) std::cout << ", ";
-		}
-		std::cout << "]" << std::endl;
-	}
-	std::cout << "==================================\n" << std::endl;
 
 	for (size_t i = 0; i < output_tensors.size(); i += 2) {
 		// Key tensor
@@ -430,6 +433,58 @@ float PrefixCacheInferencer::value_inference_with_cache(int value_token_id)
 	auto value_data = value_tensor.GetTensorData<float>();
 
 	return value_data[0];  // Single value prediction
+}
+
+
+float PrefixCacheInferencer::value_inference_direct(
+	const std::vector<int64_t>& input_ids,
+	int batch_size,
+	int seq_len
+)
+{
+	if (!evaluation_session_) {
+		throw std::runtime_error("Evaluation model not loaded. Provide evaluation_model_path in constructor.");
+	}
+
+	// Prepare input tensor [batch_size, seq_len]
+	std::vector<int64_t> input_shape = {batch_size, seq_len};
+
+	Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(
+		OrtArenaAllocator, OrtMemTypeDefault);
+
+	auto input_tensor = Ort::Value::CreateTensor<int64_t>(
+		memory_info,
+		const_cast<int64_t*>(input_ids.data()),
+		input_ids.size(),
+		input_shape.data(),
+		input_shape.size()
+	);
+
+	// Get input/output names
+	auto input_name_ptr = evaluation_session_->GetInputNameAllocated(0, allocator_);
+	const char* input_names[] = {input_name_ptr.get()};
+
+	auto output_name_ptr = evaluation_session_->GetOutputNameAllocated(0, allocator_);
+	const char* output_names[] = {output_name_ptr.get()};
+
+	// Run evaluation model
+	std::vector<Ort::Value> input_tensors;
+	input_tensors.push_back(std::move(input_tensor));
+
+	auto output_tensors = evaluation_session_->Run(
+		Ort::RunOptions{nullptr},
+		input_names,
+		input_tensors.data(),
+		input_tensors.size(),
+		output_names,
+		1
+	);
+
+	// Get value output [batch_size]
+	auto& value_tensor = output_tensors[0];
+	auto value_data = value_tensor.GetTensorData<float>();
+
+	return value_data[0];  // First batch item
 }
 
 
