@@ -473,12 +473,10 @@ private:
 			// Black minimizes Q (flips sign), White maximizes Q
 			float score = (is_white ? q : -q) + u;
 
-			// Penalize zero-prior nodes: only consider them if nothing else is available
-			// This prevents exploiting negative Q values when policy network assigns zero probability
-			if (child->prior_prob <= 1e-6f)
-			{
-				score -= 1000.0f;  // Heavy penalty to avoid selection unless necessary
-			}
+			// NOTE: Removed -1000 penalty for zero-prior moves (December 10, 2025)
+			// TypeScript mctsAgent.ts does NOT have this penalty.
+			// Allowing Q to drive selection even for low-prior moves is consistent with
+			// AlphaZero behavior where value network can override policy network.
 
 			if (score > best_score)
 			{

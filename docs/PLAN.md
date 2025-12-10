@@ -691,9 +691,9 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
 
 ---
 
-## Phase 5.8: C++ vs TypeScript MCTS Consistency - TODO
+## Phase 5.8: C++ vs TypeScript MCTS Consistency - IN PROGRESS
 
-**Status**: Not Started
+**Status**: Phase 5.8.1 & 5.8.2 Complete (HIGH/MEDIUM priority), Phase 5.8.3 Pending (LOW priority)
 
 **Goal**: Align C++ `cached_mcts.hpp` with TypeScript `mctsAgent.ts` to ensure consistent move selection.
 
@@ -737,25 +737,42 @@ if (terminal_value.has_value()) {
 - [x] Modified `search()` to skip NN inference when terminal, use ground-truth value
 - [x] Validated with test_terminal_detection.cpp (all tests pass)
 
+**GPT-5.1 Review Notes**:
+- ✅ Terminal detection logic matches TypeScript exactly
+- ✅ Formula `sign(scoreDiff) * (1 + log(|scoreDiff|))` is identical
+- ✅ Value sign convention (white-positive) consistent with `evaluate_with_cache()` and `backpropagate()`
+- ✅ Coverage > 0.5 threshold and neutral == 0 check match TS
+- Note: `get_territory()` is non-const (may update internal cache), safe for repeated calls
+
 ---
 
-#### 2. Zero-Prior Move Penalty ⚠️ MEDIUM PRIORITY
+#### 2. Zero-Prior Move Penalty ✅ COMPLETE
 
 | Aspect | TypeScript | C++ |
 |--------|------------|-----|
-| Handling | No penalty, Q alone can drive selection | `-1000` penalty if prior ≤ 1e-6 |
+| Handling | No penalty, Q alone can drive selection | ✅ No penalty (removed) |
 
-**C++ code** (`select_best_puct_child`):
+**C++ code** (`select_best_puct_child`) - UPDATED December 10, 2025:
 ```cpp
-if (child->prior_prob <= 1e-6f)
-    score -= 1000.0f;  // heavy penalty
+// Black minimizes Q (flips sign), White maximizes Q
+float score = (is_white ? q : -q) + u;
+
+// NOTE: Removed -1000 penalty for zero-prior moves (December 10, 2025)
+// TypeScript mctsAgent.ts does NOT have this penalty.
+// Allowing Q to drive selection even for low-prior moves is consistent with
+// AlphaZero behavior where value network can override policy network.
 ```
 
-**Impact**: C++ will almost never select low-prior moves even if value network later discovers they are good. TypeScript allows Q to override low priors.
+**Fix Applied**:
+- [x] Removed `-1000` penalty in `select_best_puct_child()`
+- [x] Verified Pass move (prior=0.000000) can now be visited (visits=1 in test)
+- [x] No regression in normal play (test_mcts_full_search passes)
 
-**Fix Required**:
-- [ ] Remove or relax the `-1000` penalty to match TypeScript behavior
-- [ ] Alternative: Use same behavior as TypeScript (no penalty)
+**GPT-5.1 Review Notes**:
+- ✅ Now matches TypeScript and AlphaZero-style PUCT exactly
+- P=0 moves have U=0, so they're explored only when Q becomes attractive (expected behavior)
+- Policy shapes exploration but doesn't absolutely forbid low/zero-prior moves
+- If stronger exploration of P=0 moves is needed, could add `min_prior` floor (but would deviate from TS)
 
 ---
 
@@ -841,10 +858,10 @@ These aspects are already aligned between implementations:
 3. ✅ Modified `search()` to use ground-truth value at terminal states
 4. ✅ Tested with `test_terminal_detection.cpp` - all tests pass
 
-**Phase 5.8.2**: Zero-Prior Handling (MEDIUM)
-1. Remove `-1000` penalty in `select_best_puct_child()`
-2. Test that low-prior but high-value moves can be selected
-3. Verify no regression in normal play
+**Phase 5.8.2**: Zero-Prior Handling ✅ COMPLETE (December 10, 2025)
+1. ✅ Removed `-1000` penalty in `select_best_puct_child()`
+2. ✅ Verified low-prior moves can be selected (Pass with prior=0 got visits=1)
+3. ✅ No regression in normal play
 
 **Phase 5.8.3**: Minor Alignments (LOW)
 1. Optionally align first-child selection behavior
