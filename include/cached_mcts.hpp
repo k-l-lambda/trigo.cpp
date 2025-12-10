@@ -503,11 +503,33 @@ private:
 
 	/**
 	 * Convert game history to token sequence
+	 *
+	 * Matches TypeScript TrigoTreeAgent.buildMoveTree behavior:
+	 * - Generates TGN from game history
+	 * - Appends move number prefix when it's a player's turn
+	 * - Black's turn: add "N. " (move number + space)
+	 * - White's turn: add " " (just space after Black's move)
 	 */
 	std::vector<int64_t> game_to_tokens(const TrigoGame& game)
 	{
 		// Generate TGN text
 		std::string tgn_text = game_to_tgn(game, false);
+
+		// Add move number prefix for the next move (TypeScript compatibility)
+		// This matches TrigoTreeAgent.buildMoveTree lines 193-209
+		const auto& history = game.get_history();
+		int move_number = static_cast<int>(history.size()) / 2 + 1;
+
+		if (game.get_current_player() == Stone::Black)
+		{
+			// Black's turn: add move number
+			tgn_text += std::to_string(move_number) + ". ";
+		}
+		else
+		{
+			// White's turn: add space after Black's move
+			tgn_text += " ";
+		}
 
 		// Tokenize
 		auto encoded = tokenizer.encode(tgn_text, 8192, false, false, false, false);

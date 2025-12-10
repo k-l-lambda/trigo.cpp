@@ -584,3 +584,33 @@ set_target_properties(test_value_comparison PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
+
+# Test policy consistency (no noise, no temperature)
+add_executable(test_policy_consistency tests/test_policy_consistency.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_policy_consistency PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_policy_consistency PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_policy_consistency PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test tree model policy inference (C++ vs TypeScript comparison)
+add_executable(test_tree_model_policy tests/test_tree_model_policy.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_tree_model_policy PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_tree_model_policy PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_tree_model_policy PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
