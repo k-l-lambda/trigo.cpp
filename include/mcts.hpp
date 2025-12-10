@@ -25,6 +25,8 @@
 #include <random>
 #include <chrono>
 #include <iostream>
+#include <algorithm>
+#include <iomanip>
 
 
 namespace trigo
@@ -223,9 +225,9 @@ public:
 			{
 				node = expand(node, game_copy);
 
-				// Apply Dirichlet noise to root after first expansion
-				// This ensures all root children exist before adding noise
-				if (!dirichlet_applied && root->is_fully_expanded)
+				// Apply Dirichlet noise to root immediately after first expansion
+				// AlphaZero style: add noise as soon as root children exist
+				if (!dirichlet_applied && !root->children.empty())
 				{
 					add_dirichlet_noise_to_root();
 					dirichlet_applied = true;
@@ -311,83 +313,117 @@ private:
 
 
 	/**
-	 * Expansion phase: Add one new child node with policy prior
+	 * Expansion phase: Add ALL child nodes with policy priors (AlphaZero style)
+	 *
+	 * Unlike traditional MCTS that expands one node at a time,
+	 * AlphaZero expands all children at once and sets their priors from policy network.
 	 */
 	MCTSNode* expand(MCTSNode* node, TrigoGame& game)
 	{
-		// Get all valid moves
-		auto valid_moves = game.valid_move_positions();
+		// AlphaZero-style: Expand ALL children at once on first visit
+		// This ensures proper prior distribution without renormalization issues
 
-		// Pass is always available in Trigo when game is active
-		bool can_pass = game.is_game_active();
-
-		// Find unexpanded moves
-		std::vector<Position> unexpanded_moves;
-		for (const auto& move : valid_moves)
+		// If already expanded, select a child to traverse
+		if (!node->children.empty())
 		{
-			bool already_expanded = false;
+			// Find unexpanded child or select best by PUCT
 			for (const auto& child : node->children)
 			{
-				if (!child->is_pass && child->move == move)
+				if (child->visit_count == 0)
 				{
-					already_expanded = true;
-					break;
+					// Apply move to game
+					if (child->is_pass)
+					{
+						game.pass();
+					}
+					else
+					{
+						game.drop(child->move);
+					}
+					return child.get();
 				}
 			}
-			if (!already_expanded)
-			{
-				unexpanded_moves.push_back(move);
-			}
+
+			// All children have been visited at least once
+			node->is_fully_expanded = true;
+			return node;
 		}
 
-		// Check if pass is unexpanded
-		bool pass_unexpanded = can_pass;
-		for (const auto& child : node->children)
-		{
-			if (child->is_pass)
-			{
-				pass_unexpanded = false;
-				break;
-			}
-		}
+		// Get all valid moves
+		auto valid_moves = game.valid_move_positions();
+		bool can_pass = game.is_game_active();
 
-		// If all moves expanded, mark as fully expanded
-		if (unexpanded_moves.empty() && !pass_unexpanded)
+		// Handle terminal or no-move situations
+		if (valid_moves.empty() && !can_pass)
 		{
 			node->is_fully_expanded = true;
 			return node;
 		}
 
-		// Select random unexpanded move (could use policy network here)
-		MCTSNode* new_child = nullptr;
-		float prior = 1.0f;  // Uniform prior for now (could use policy network)
+		// Get policy priors for ALL valid moves at once
+		std::vector<float> priors = get_move_priors(game, valid_moves, can_pass);
 
-		if (pass_unexpanded && unexpanded_moves.empty())
+#ifdef MCTS_ENABLE_PROFILING
+		// Debug: Print top 5 moves with priors
+		auto board_shape = game.get_shape();
+		std::vector<std::pair<size_t, float>> indexed_priors;
+		for (size_t i = 0; i < priors.size(); i++)
 		{
-			// Only pass available
-			new_child = new MCTSNode(Position{0, 0, 0}, true, node, prior);
-			node->children.push_back(std::unique_ptr<MCTSNode>(new_child));
+			indexed_priors.push_back({i, priors[i]});
+		}
+		std::sort(indexed_priors.begin(), indexed_priors.end(),
+			[](const auto& a, const auto& b) { return a.second > b.second; });
+
+		std::cout << "  [expand] Top 5 moves by prior:" << std::endl;
+		for (size_t i = 0; i < std::min(size_t(5), indexed_priors.size()); i++)
+		{
+			size_t idx = indexed_priors[i].first;
+			std::string move_str;
+			if (idx < valid_moves.size())
+			{
+				move_str = encode_ab0yz(valid_moves[idx], board_shape);
+			}
+			else
+			{
+				move_str = "Pass";
+			}
+			std::cout << "    " << (i + 1) << ". " << move_str
+				<< " prior=" << std::fixed << std::setprecision(6) << priors[idx] << std::endl;
+		}
+#endif
+
+		// Create ALL child nodes with their priors
+		for (size_t i = 0; i < valid_moves.size(); i++)
+		{
+			auto new_node = std::make_unique<MCTSNode>(valid_moves[i], false, node, priors[i]);
+			node->children.push_back(std::move(new_node));
+		}
+
+		// Add Pass node if available
+		if (can_pass)
+		{
+			float pass_prior = priors.back();
+			auto pass_node = std::make_unique<MCTSNode>(Position{0, 0, 0}, true, node, pass_prior);
+			node->children.push_back(std::move(pass_node));
+		}
+
+		// Select first child using prior-weighted sampling
+		std::discrete_distribution<size_t> dist(priors.begin(), priors.end());
+		size_t idx = dist(rng);
+
+		MCTSNode* selected_child = node->children[idx].get();
+
+		// Apply selected move to game
+		if (selected_child->is_pass)
+		{
 			game.pass();
 		}
-		else if (!unexpanded_moves.empty())
+		else
 		{
-			// Select random move
-			std::uniform_int_distribution<size_t> dist(0, unexpanded_moves.size() - 1);
-			size_t idx = dist(rng);
-			Position move = unexpanded_moves[idx];
-
-			new_child = new MCTSNode(move, false, node, prior);
-			node->children.push_back(std::unique_ptr<MCTSNode>(new_child));
-			game.drop(move);
+			game.drop(selected_child->move);
 		}
 
-		// Check if all moves now expanded
-		if (unexpanded_moves.size() == 1 && !pass_unexpanded)
-		{
-			node->is_fully_expanded = true;
-		}
-
-		return new_child;
+		return selected_child;
 	}
 
 
@@ -495,8 +531,292 @@ private:
 
 
 	/**
-	 * Select child with best PUCT score
+	 * Apply softmax to logits (numerical stability)
 	 */
+	std::vector<float> softmax(const std::vector<float>& logits)
+	{
+		if (logits.empty())
+			return {};
+
+		float max_logit = *std::max_element(logits.begin(), logits.end());
+
+		std::vector<float> exp_vals(logits.size());
+		float sum = 0.0f;
+		for (size_t i = 0; i < logits.size(); i++)
+		{
+			exp_vals[i] = std::exp(logits[i] - max_logit);
+			sum += exp_vals[i];
+		}
+
+		std::vector<float> probs(logits.size());
+		for (size_t i = 0; i < logits.size(); i++)
+		{
+			probs[i] = exp_vals[i] / sum;
+		}
+
+		return probs;
+	}
+
+
+	/**
+	 * Compute softmax for a single position in logits array
+	 */
+	std::vector<float> softmax_at_position(
+		const std::vector<float>& logits,
+		int position,
+		int vocab_size
+	)
+	{
+		int offset = position * vocab_size;
+		std::vector<float> position_logits(vocab_size);
+		for (int i = 0; i < vocab_size; i++)
+		{
+			position_logits[i] = logits[offset + i];
+		}
+		return softmax(position_logits);
+	}
+
+
+	/**
+	 * Convert log scores to normalized probabilities via exp and normalization
+	 */
+	std::vector<float> exp_normalize(const std::vector<float>& log_scores)
+	{
+		if (log_scores.empty())
+			return {};
+
+		float max_score = -std::numeric_limits<float>::infinity();
+		for (float score : log_scores)
+		{
+			if (std::isfinite(score) && score > max_score)
+			{
+				max_score = score;
+			}
+		}
+
+		if (!std::isfinite(max_score))
+		{
+			// All scores are -inf or nan, return uniform
+			return std::vector<float>(log_scores.size(), 1.0f / log_scores.size());
+		}
+
+		std::vector<float> exp_vals(log_scores.size());
+		float sum = 0.0f;
+		for (size_t i = 0; i < log_scores.size(); i++)
+		{
+			if (std::isfinite(log_scores[i]))
+			{
+				exp_vals[i] = std::exp(log_scores[i] - max_score);
+			}
+			else
+			{
+				exp_vals[i] = 0.0f;
+			}
+			sum += exp_vals[i];
+		}
+
+		if (sum <= 0.0f)
+		{
+			return std::vector<float>(log_scores.size(), 1.0f / log_scores.size());
+		}
+
+		std::vector<float> probs(log_scores.size());
+		for (size_t i = 0; i < log_scores.size(); i++)
+		{
+			probs[i] = exp_vals[i] / sum;
+		}
+
+		return probs;
+	}
+
+
+	/**
+	 * Get policy priors for all valid moves using neural network
+	 *
+	 * Uses PrefixTreeBuilder to construct tree structure,
+	 * then SharedModelInferencer::policy_inference for evaluation.
+	 *
+	 * @param game Current game state
+	 * @param valid_moves List of valid positions
+	 * @param include_pass Whether to include Pass as an option
+	 * @return Probability distribution over moves (normalized)
+	 */
+	std::vector<float> get_move_priors(
+		const TrigoGame& game,
+		const std::vector<Position>& valid_moves,
+		bool include_pass
+	)
+	{
+		auto board_shape = game.get_shape();
+		std::vector<std::vector<int64_t>> candidate_sequences;
+		std::vector<std::string> move_notations;
+
+		// Add regular moves (ONLY move tokens, not prefix)
+		// Exclude last token (following TypeScript trigoTreeAgent.ts pattern)
+		for (const auto& move : valid_moves)
+		{
+			std::string coord = encode_ab0yz(move, board_shape);
+			auto move_tokens = tokenizer.encode(coord, 2048, false, false, false, false);
+
+			move_notations.push_back(coord);
+
+			if (move_tokens.size() > 1)
+			{
+				std::vector<int64_t> seq(move_tokens.begin(), move_tokens.end() - 1);
+				candidate_sequences.push_back(seq);
+			}
+			else
+			{
+				candidate_sequences.push_back(std::vector<int64_t>());
+			}
+		}
+
+		// Add pass if needed
+		if (include_pass)
+		{
+			auto pass_tokens = tokenizer.encode("Pass", 2048, false, false, false, false);
+			move_notations.push_back("Pass");
+
+			// Always push a candidate sequence for pass to keep arrays aligned
+			if (pass_tokens.size() > 1)
+			{
+				std::vector<int64_t> seq(pass_tokens.begin(), pass_tokens.end() - 1);
+				candidate_sequences.push_back(seq);
+			}
+			else
+			{
+				// Single-token or empty: treat as single-token move (leaf_pos == -1)
+				candidate_sequences.push_back(std::vector<int64_t>());
+			}
+		}
+
+		// Build prefix tree
+		PrefixTreeBuilder tree_builder;
+		auto tree_structure = tree_builder.build_tree(candidate_sequences);
+
+		// Build game prefix tokens
+		std::string tgn_text = game_to_tgn(game, true);  // Include move number prefix
+		auto prefix_tokens = tokenizer.encode(tgn_text, 8192, false, false, false, false);
+
+		// Add START token at beginning
+		std::vector<int64_t> prefix_ids;
+		prefix_ids.push_back(1);  // START token
+		prefix_ids.insert(prefix_ids.end(), prefix_tokens.begin(), prefix_tokens.end());
+
+		int prefix_len = static_cast<int>(prefix_ids.size());
+		int eval_len = tree_structure.num_nodes;
+
+		try
+		{
+			// Get policy logits from neural network
+			auto logits = inferencer->policy_inference(
+				prefix_ids,
+				tree_structure.evaluated_ids,
+				tree_structure.evaluated_mask,
+				1,  // batch_size
+				prefix_len,
+				eval_len
+			);
+
+			int vocab_size = static_cast<int>(logits.size()) / (eval_len + 1);
+
+			// Score each move by accumulating log probabilities along path
+			const float MIN_PROB = 1e-10f;
+			std::vector<float> log_scores;
+
+			for (size_t i = 0; i < candidate_sequences.size(); i++)
+			{
+				int leaf_pos = tree_structure.move_to_leaf[i];
+				float log_prob = 0.0f;
+
+				if (leaf_pos == -1)
+				{
+					// Single-token move: direct prediction from prefix
+					const std::string& notation = move_notations[i];
+					auto notation_tokens = tokenizer.encode(notation, 2048, false, false, false, false);
+					if (notation_tokens.empty())
+					{
+						log_prob = std::log(MIN_PROB);
+					}
+					else
+					{
+						int64_t token = notation_tokens[0];
+						auto probs = softmax_at_position(logits, 0, vocab_size);
+						float prob = std::max(probs[token], MIN_PROB);
+						log_prob = std::log(prob);
+					}
+				}
+				else
+				{
+					// Multi-token move: accumulate along path
+					std::vector<int> path_reverse;
+					int pos = leaf_pos;
+					while (pos != -1)
+					{
+						path_reverse.push_back(pos);
+						pos = tree_structure.parent[pos];
+					}
+					std::reverse(path_reverse.begin(), path_reverse.end());
+
+					// 1. Root token
+					if (!path_reverse.empty())
+					{
+						int root_pos = path_reverse[0];
+						int64_t root_token = tree_structure.evaluated_ids[root_pos];
+						auto probs = softmax_at_position(logits, 0, vocab_size);
+						float prob = std::max(probs[root_token], MIN_PROB);
+						log_prob += std::log(prob);
+					}
+
+					// 2. Intermediate transitions
+					for (size_t j = 1; j < path_reverse.size(); j++)
+					{
+						int parent_pos = path_reverse[j - 1];
+						int child_pos = path_reverse[j];
+						int64_t child_token = tree_structure.evaluated_ids[child_pos];
+
+						int logits_index = parent_pos + 1;
+						auto probs = softmax_at_position(logits, logits_index, vocab_size);
+						float prob = std::max(probs[child_token], MIN_PROB);
+						log_prob += std::log(prob);
+					}
+
+					// 3. Last token
+					if (!path_reverse.empty())
+					{
+						int leaf = path_reverse.back();
+						const std::string& notation = move_notations[i];
+						auto notation_tokens = tokenizer.encode(notation, 2048, false, false, false, false);
+						if (notation_tokens.empty())
+						{
+							log_prob += std::log(MIN_PROB);
+						}
+						else
+						{
+							int64_t last_token = notation_tokens.back();
+							int logits_index = leaf + 1;
+							auto probs = softmax_at_position(logits, logits_index, vocab_size);
+							float prob = std::max(probs[last_token], MIN_PROB);
+							log_prob += std::log(prob);
+						}
+					}
+				}
+
+				log_scores.push_back(log_prob);
+			}
+
+			return exp_normalize(log_scores);
+		}
+		catch (const std::exception& e)
+		{
+			std::cerr << "[MCTS] Policy prior inference error: " << e.what() << "\n";
+			// Fallback to uniform priors
+			size_t num_moves = valid_moves.size() + (include_pass ? 1 : 0);
+			return std::vector<float>(num_moves, 1.0f / num_moves);
+		}
+	}
+
+
 	MCTSNode* select_best_puct_child(MCTSNode* node)
 	{
 		MCTSNode* best = nullptr;

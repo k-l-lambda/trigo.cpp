@@ -39,20 +39,20 @@ int main()
 
 	std::cout << "Models loaded successfully.\n\n";
 
-	// Create a simple game state
-	TrigoGame game(BoardShape{5, 5, 5});
+	// Create a simple game state (5x5x1 matches training data)
+	TrigoGame game(BoardShape{5, 5, 1});
 	game.start_game();
 
-	std::cout << "Game initialized. Board: 5x5x5\n";
+	std::cout << "Game initialized. Board: 5x5x1\n";
 	std::cout << "Current player: " << (game.get_current_player() == Stone::Black ? "Black" : "White") << "\n";
 
 	// Check valid moves
 	auto valid_moves = game.valid_move_positions();
 	std::cout << "Valid moves: " << valid_moves.size() << "\n\n";
 
-	// Create MCTS with 50 simulations (AlphaZero-style with value network)
-	std::cout << "Creating MCTS (AlphaZero) with 50 simulations...\n";
-	MCTS mcts(inferencer, 50, 1.0f, 42);
+	// Create MCTS with 100 simulations (AlphaZero-style with value network)
+	std::cout << "Creating MCTS (AlphaZero) with 100 simulations...\n";
+	MCTS mcts(inferencer, 100, 1.0f, 42);
 
 	std::cout << "Starting MCTS search...\n";
 	auto start = std::chrono::steady_clock::now();
@@ -66,7 +66,7 @@ int main()
 
 	std::cout << "\n=== Search Complete ===\n";
 	std::cout << "Time: " << elapsed << "ms\n";
-	std::cout << "Simulations per second: " << (50.0 / elapsed * 1000.0) << "\n\n";
+	std::cout << "Simulations per second: " << (100.0 / elapsed * 1000.0) << "\n\n";
 
 	if (action.is_pass)
 	{
@@ -79,11 +79,10 @@ int main()
 	}
 	std::cout << "Confidence: " << action.confidence << "\n";
 
-	// Performance comparison
 	std::cout << "\n=== Performance Comparison ===\n";
 	std::cout << "PureMCTS (random rollouts): ~923ms per simulation\n";
-	std::cout << "MCTS (value network): ~" << (elapsed / 50.0) << "ms per simulation\n";
-	float speedup = 923.0 / (elapsed / 50.0);
+	std::cout << "MCTS (value network): ~" << (elapsed / 100.0) << "ms per simulation\n";
+	float speedup = 923.0 / (elapsed / 100.0);
 	std::cout << "Speedup: " << speedup << "×\n";
 
 	std::cout << "\n✓ Test complete\n\n";
