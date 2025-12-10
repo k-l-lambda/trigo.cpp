@@ -701,13 +701,13 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
 
 ### Identified Differences
 
-#### 1. Terminal State Detection & Valuation ⚠️ HIGH PRIORITY
+#### 1. Terminal State Detection & Valuation ✅ COMPLETE
 
 | Aspect | TypeScript | C++ |
 |--------|------------|-----|
-| Detection | `checkTerminal()` with two conditions | Only `is_game_active()` |
-| Value source | Ground-truth territory calculation | Always NN inference |
-| Formula | `sign(diff) * (1 + log(|diff|))` | NN output directly |
+| Detection | `checkTerminal()` with two conditions | ✅ `checkTerminal()` added |
+| Value source | Ground-truth territory calculation | ✅ Ground-truth territory |
+| Formula | `sign(diff) * (1 + log(|diff|))` | ✅ Same formula |
 
 **TypeScript behavior**:
 ```typescript
@@ -717,19 +717,25 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
 // Returns: calculateTerminalValue(territory) = sign(scoreDiff) * (1 + log(|scoreDiff|))
 ```
 
-**C++ behavior**:
+**C++ behavior** (UPDATED December 10, 2025):
 ```cpp
-// Only checks is_game_active() to stop simulation
-// Always uses NN value even at terminal states:
-float value = evaluate_with_cache(game_copy);
+// checkTerminal() now checks same conditions as TypeScript:
+// 1. get_game_status() == GameStatus::FINISHED
+// 2. coverageRatio > 0.5f && territory.neutral == 0
+// Returns: calculateTerminalValue(territory) with same formula
+auto terminal_value = checkTerminal(game_copy);
+if (terminal_value.has_value()) {
+    value = terminal_value.value();  // Ground-truth
+} else {
+    value = evaluate_with_cache(game_copy);  // NN inference
+}
 ```
 
-**Impact**: If NN misvalues terminal positions, C++ may make suboptimal decisions at game end.
-
-**Fix Required**:
-- [ ] Add `checkTerminal()` function to C++ with same logic as TypeScript
-- [ ] Add `calculateTerminalValue()` using territory-based formula
-- [ ] Skip NN inference when terminal, use ground-truth value
+**Fix Applied**:
+- [x] Added `checkTerminal()` function to C++ with same logic as TypeScript
+- [x] Added `calculateTerminalValue()` using territory-based formula
+- [x] Modified `search()` to skip NN inference when terminal, use ground-truth value
+- [x] Validated with test_terminal_detection.cpp (all tests pass)
 
 ---
 
@@ -829,11 +835,11 @@ These aspects are already aligned between implementations:
 
 ### Implementation Plan
 
-**Phase 5.8.1**: Terminal Detection (HIGH)
-1. Add `checkTerminal()` to `cached_mcts.hpp`
-2. Add `calculateTerminalValue()` with log-scaled territory formula
-3. Modify `search()` to use ground-truth value at terminal states
-4. Test with games that reach natural end
+**Phase 5.8.1**: Terminal Detection ✅ COMPLETE (December 10, 2025)
+1. ✅ Added `checkTerminal()` to `cached_mcts.hpp`
+2. ✅ Added `calculateTerminalValue()` with log-scaled territory formula
+3. ✅ Modified `search()` to use ground-truth value at terminal states
+4. ✅ Tested with `test_terminal_detection.cpp` - all tests pass
 
 **Phase 5.8.2**: Zero-Prior Handling (MEDIUM)
 1. Remove `-1000` penalty in `select_best_puct_child()`

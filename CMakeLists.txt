@@ -614,3 +614,18 @@ set_target_properties(test_tree_model_policy PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
+
+# Test terminal state detection (TypeScript consistency)
+add_executable(test_terminal_detection tests/test_terminal_detection.cpp)
+target_link_libraries(test_terminal_detection PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_terminal_detection PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_terminal_detection PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)

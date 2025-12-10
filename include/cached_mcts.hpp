@@ -174,8 +174,22 @@ public:
 			).count() - select_time;
 #endif
 
-			// 3. Evaluation: Use value network with cache
-			float value = evaluate_with_cache(game_copy);
+			// 3. Evaluation: Check for terminal state first, then use value network
+			// TypeScript consistency: Use ground-truth territory value at terminal states
+			float value;
+			auto terminal_value = checkTerminal(game_copy);
+			if (terminal_value.has_value())
+			{
+				value = terminal_value.value();
+#ifdef MCTS_ENABLE_PROFILING
+				std::cout << "    [eval] Terminal state detected, ground-truth value=" << std::fixed << std::setprecision(4) << value << "\n";
+#endif
+			}
+			else
+			{
+				// Non-terminal: Use value network with cache
+				value = evaluate_with_cache(game_copy);
+			}
 
 #ifdef MCTS_ENABLE_PROFILING
 			// Debug: Show what node was evaluated and its value
@@ -1006,6 +1020,101 @@ private:
 				(1.0f - dirichlet_epsilon) * original_prior +
 				dirichlet_epsilon * normalized_noise;
 		}
+	}
+
+
+	/**
+	 * Calculate terminal value from territory scores
+	 *
+	 * Uses logarithmic scaling matching the training code.
+	 * Formula: sign(scoreDiff) * (1 + log(|scoreDiff|))
+	 *
+	 * @param territory Territory counts from game
+	 * @return Value (white-positive: positive = white winning)
+	 */
+	float calculateTerminalValue(const TerritoryResult& territory)
+	{
+		float scoreDiff = static_cast<float>(territory.white - territory.black);
+
+		if (std::abs(scoreDiff) < 1e-6f)
+		{
+			// Draw/tie case
+			return 0.0f;
+		}
+
+		// Match training formula from valueCausalLoss.py:_expand_value_targets
+		// target = sign(score) * (1 + log(|score|)) * territory_value_factor
+		// The log term incentivizes winning by larger margins (logarithmically)
+		const float territory_value_factor = 1.0f;  // Default from training config
+		float signScore = (scoreDiff > 0.0f) ? 1.0f : -1.0f;
+		return signScore * (1.0f + std::log(std::abs(scoreDiff))) * territory_value_factor;
+	}
+
+
+	/**
+	 * Check if game state is terminal and return ground-truth value if so
+	 *
+	 * Matches TypeScript mctsAgent.checkTerminal() behavior:
+	 * 1. Check if game is already finished (double-pass, resignation)
+	 * 2. Check for "natural" game end (coverage > 50% && neutral == 0)
+	 *
+	 * @param game Game state to check
+	 * @return Terminal value (white-positive) if terminal, nullopt otherwise
+	 */
+	std::optional<float> checkTerminal(TrigoGame& game)
+	{
+		// 1. Check if game is already finished (double-pass, resignation, etc.)
+		if (game.get_game_status() == GameStatus::FINISHED)
+		{
+			auto territory = game.get_territory();
+			return calculateTerminalValue(territory);
+		}
+
+		// 2. Check for "natural" game end (all territory claimed)
+		const auto& board = game.get_board();
+		const auto& shape = game.get_shape();
+		int totalPositions = shape.x * shape.y * shape.z;
+
+		// Count stones (cheap)
+		int stoneCount = 0;
+		bool hasBlack = false;
+		bool hasWhite = false;
+
+		for (int x = 0; x < shape.x; x++)
+		{
+			for (int y = 0; y < shape.y; y++)
+			{
+				for (int z = 0; z < shape.z; z++)
+				{
+					Stone stone = board[x][y][z];
+					if (stone == Stone::Black)
+					{
+						hasBlack = true;
+						stoneCount++;
+					}
+					else if (stone == Stone::White)
+					{
+						hasWhite = true;
+						stoneCount++;
+					}
+				}
+			}
+		}
+
+		float coverageRatio = static_cast<float>(stoneCount) / totalPositions;
+
+		// Only check territory if board is reasonably full
+		// (optimization: neutral == 0 is unlikely with sparse board)
+		if (hasBlack && hasWhite && coverageRatio > 0.5f)
+		{
+			auto territory = game.get_territory();
+			if (territory.neutral == 0)
+			{
+				return calculateTerminalValue(territory);
+			}
+		}
+
+		return std::nullopt;  // Not terminal
 	}
 };
 
