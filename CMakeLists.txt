@@ -577,3 +577,10 @@ set_target_properties(test_kv_cache_comparison PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
+
+add_executable(test_value_comparison tests/test_value_comparison.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_value_comparison PRIVATE trigo_game trigo_inference ${ONNXRUNTIME_LIB})
+set_target_properties(test_value_comparison PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
