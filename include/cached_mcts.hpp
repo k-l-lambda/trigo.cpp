@@ -83,9 +83,11 @@ public:
 	 * Run AlphaZero MCTS search with cached inference
 	 *
 	 * @param game Current game state
+	 * @param temperature Selection temperature (τ=1 for exploration, τ→0 for greedy)
+	 *                    Default 0.0 for deterministic argmax selection
 	 * @return Best move found by MCTS
 	 */
-	PolicyAction search(const TrigoGame& game)
+	PolicyAction search(const TrigoGame& game, float temperature = 0.0f)
 	{
 		// Create root node
 		root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false);
@@ -248,8 +250,8 @@ public:
 		std::cout << std::endl;
 #endif
 
-		// Select best move by visit count (most robust)
-		return select_best_child();
+		// Select best move by visit count with temperature-based sampling
+		return select_best_child(temperature);
 	}
 
 
@@ -501,9 +503,15 @@ private:
 
 
 	/**
-	 * Select best child by visit count (most robust)
+	 * Select best child by visit count with temperature-based sampling
+	 *
+	 * TypeScript consistency: π(a|s) ∝ N(s,a)^(1/τ)
+	 * - temperature < 0.01: Greedy argmax (deterministic)
+	 * - temperature >= 0.01: Sample from N^(1/τ) distribution
+	 *
+	 * @param temperature Selection temperature (τ=1 for exploration, τ→0 for greedy)
 	 */
-	PolicyAction select_best_child()
+	PolicyAction select_best_child(float temperature)
 	{
 		if (root->children.empty())
 		{
@@ -511,33 +519,82 @@ private:
 			return PolicyAction::Pass();
 		}
 
-		MCTSNode* best = nullptr;
-		int max_visits = -1;
+		MCTSNode* selected = nullptr;
 
-		for (const auto& child : root->children)
+		if (temperature < 0.01f)
 		{
-			if (child->visit_count > max_visits)
+			// Greedy: Select action with highest visit count
+			int max_visits = -1;
+			for (const auto& child : root->children)
 			{
-				max_visits = child->visit_count;
-				best = child.get();
+				if (child->visit_count > max_visits)
+				{
+					max_visits = child->visit_count;
+					selected = child.get();
+				}
+			}
+		}
+		else
+		{
+			// Temperature-based sampling: π(a|s) ∝ N(s,a)^(1/τ)
+			std::vector<float> n_powered;
+			n_powered.reserve(root->children.size());
+
+			float sum_n = 0.0f;
+			for (const auto& child : root->children)
+			{
+				float n_pow = std::pow(static_cast<float>(child->visit_count), 1.0f / temperature);
+				n_powered.push_back(n_pow);
+				sum_n += n_pow;
+			}
+
+			// Handle edge case: if all visits are 0 or sum is invalid
+			if (!std::isfinite(sum_n) || sum_n <= 0.0f)
+			{
+				// Fallback to uniform random selection
+				std::uniform_int_distribution<size_t> dist(0, root->children.size() - 1);
+				size_t idx = dist(rng);
+				selected = root->children[idx].get();
+			}
+			else
+			{
+				// Sample from distribution
+				std::uniform_real_distribution<float> dist(0.0f, sum_n);
+				float rand = dist(rng);
+
+				for (size_t i = 0; i < root->children.size(); i++)
+				{
+					rand -= n_powered[i];
+					if (rand <= 0.0f)
+					{
+						selected = root->children[i].get();
+						break;
+					}
+				}
+
+				// Fallback (shouldn't reach here due to floating point precision)
+				if (selected == nullptr)
+				{
+					selected = root->children.back().get();
+				}
 			}
 		}
 
-		if (best == nullptr)
+		if (selected == nullptr)
 		{
 			return PolicyAction::Pass();
 		}
 
 		// Calculate confidence from visit proportion
-		float confidence = static_cast<float>(best->visit_count) / num_simulations;
+		float confidence = static_cast<float>(selected->visit_count) / num_simulations;
 
-		if (best->is_pass)
+		if (selected->is_pass)
 		{
 			return PolicyAction::Pass(confidence);
 		}
 		else
 		{
-			return PolicyAction(best->move, confidence);
+			return PolicyAction(selected->move, confidence);
 		}
 	}
 

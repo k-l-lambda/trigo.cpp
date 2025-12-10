@@ -841,25 +841,39 @@ root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false);
 
 ---
 
-#### 5. Temperature-based Move Selection (Design Difference)
+#### 5. Temperature-based Move Selection ✅ COMPLETE
 
 | Aspect | TypeScript | C++ |
 |--------|------------|-----|
-| Support | Temperature sampling for training | Always argmax (deterministic) |
+| Support | Temperature sampling for training | ✅ Temperature sampling supported |
 
-**TypeScript**:
-```typescript
-if (temperature < 0.01) -> argmax_N
-else -> sample ~ N(s,a)^(1/τ)
+**C++ code** (`search()` and `select_best_child()`) - UPDATED December 10, 2025:
+```cpp
+// search() now accepts temperature parameter
+PolicyAction search(const TrigoGame& game, float temperature = 0.0f)
+
+// select_best_child() implements temperature-based sampling
+// π(a|s) ∝ N(s,a)^(1/τ)
+if (temperature < 0.01f) {
+    // Greedy argmax (deterministic)
+} else {
+    // Sample from N^(1/τ) distribution
+    float n_pow = std::pow(child->visit_count, 1.0f / temperature);
+}
 ```
 
-**C++**: Always returns max-visit child.
+**Fix Applied**:
+- [x] Added `temperature` parameter to `search()` (default 0.0 for backward compatibility)
+- [x] Implemented temperature-based sampling in `select_best_child()`
+- [x] Matches TypeScript formula: `π(a|s) ∝ N(s,a)^(1/τ)`
+- [x] Edge case handling: fallback to uniform random if sum is invalid
 
-**Impact**: This is intentional - TypeScript is for training/self-play with exploration, C++ is a deterministic engine.
-
-**Fix Required**:
-- [ ] Optional: Add temperature parameter to C++ for training use
-- [ ] Or: Keep as-is (different use cases)
+**GPT-5.1 Review Notes**:
+- ✅ Same cutoff (`< 0.01`) as TypeScript
+- ✅ Same `N^(1/τ)` transformation
+- ✅ Same categorical sampling procedure
+- ✅ Fallback behavior for pathological sumN matches TS
+- ✅ Default temperature=0.0 reproduces old greedy behavior
 
 ---
 
@@ -894,7 +908,7 @@ These aspects are already aligned between implementations:
 **Phase 5.8.3**: Minor Alignments ✅ COMPLETE (December 10, 2025)
 1. ✅ Aligned first-child selection: deterministic highest-prior instead of random sampling
 2. ✅ Aligned root visit count: init to 0 instead of 1 (matches TypeScript totalN=0)
-3. Optionally add temperature support (design difference, kept as-is)
+3. ✅ Added temperature support: `search(game, temperature)` with N^(1/τ) sampling
 
 **Estimated Effort**: 2-4 hours for Phase 5.8.1-5.8.2
 
