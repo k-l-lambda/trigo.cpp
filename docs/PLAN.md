@@ -689,3 +689,173 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
 - **Alternative**: Full MCTS integration with shared cache
 - **Future**: Phase 6 - Batch inference and GPU optimization
 
+---
+
+## Phase 5.8: C++ vs TypeScript MCTS Consistency - TODO
+
+**Status**: Not Started
+
+**Goal**: Align C++ `cached_mcts.hpp` with TypeScript `mctsAgent.ts` to ensure consistent move selection.
+
+**Background**: GPT-5.1 comprehensive review (December 10, 2025) identified several behavioral differences between the two implementations that could cause divergent game play.
+
+### Identified Differences
+
+#### 1. Terminal State Detection & Valuation ⚠️ HIGH PRIORITY
+
+| Aspect | TypeScript | C++ |
+|--------|------------|-----|
+| Detection | `checkTerminal()` with two conditions | Only `is_game_active()` |
+| Value source | Ground-truth territory calculation | Always NN inference |
+| Formula | `sign(diff) * (1 + log(|diff|))` | NN output directly |
+
+**TypeScript behavior**:
+```typescript
+// checkTerminal() checks:
+// 1. gameStatus === "finished" (double-pass, resignation)
+// 2. coverage > 50% AND neutral === 0 (natural end)
+// Returns: calculateTerminalValue(territory) = sign(scoreDiff) * (1 + log(|scoreDiff|))
+```
+
+**C++ behavior**:
+```cpp
+// Only checks is_game_active() to stop simulation
+// Always uses NN value even at terminal states:
+float value = evaluate_with_cache(game_copy);
+```
+
+**Impact**: If NN misvalues terminal positions, C++ may make suboptimal decisions at game end.
+
+**Fix Required**:
+- [ ] Add `checkTerminal()` function to C++ with same logic as TypeScript
+- [ ] Add `calculateTerminalValue()` using territory-based formula
+- [ ] Skip NN inference when terminal, use ground-truth value
+
+---
+
+#### 2. Zero-Prior Move Penalty ⚠️ MEDIUM PRIORITY
+
+| Aspect | TypeScript | C++ |
+|--------|------------|-----|
+| Handling | No penalty, Q alone can drive selection | `-1000` penalty if prior ≤ 1e-6 |
+
+**C++ code** (`select_best_puct_child`):
+```cpp
+if (child->prior_prob <= 1e-6f)
+    score -= 1000.0f;  // heavy penalty
+```
+
+**Impact**: C++ will almost never select low-prior moves even if value network later discovers they are good. TypeScript allows Q to override low priors.
+
+**Fix Required**:
+- [ ] Remove or relax the `-1000` penalty to match TypeScript behavior
+- [ ] Alternative: Use same behavior as TypeScript (no penalty)
+
+---
+
+#### 3. Expansion First-Child Selection ⚠️ LOW PRIORITY
+
+| Aspect | TypeScript | C++ |
+|--------|------------|-----|
+| Selection | Deterministic PUCT (all N=0 initially) | Prior-weighted random sampling |
+
+**C++ code** (`expand()`):
+```cpp
+// After creating all children, samples first child by priors
+std::discrete_distribution<size_t> dist(priors.begin(), priors.end());
+size_t idx = dist(rng);
+```
+
+**TypeScript**: After expansion, `select()` uses deterministic PUCT where all N=0, so highest-prior move is chosen.
+
+**Impact**: With small simulation counts, different moves may be explored first. Converges with many simulations.
+
+**Fix Required**:
+- [ ] Optional: Remove prior-weighted sampling, use highest-prior child deterministically
+- [ ] Or: Keep as-is (valid AlphaZero variant, converges to same result)
+
+---
+
+#### 4. Root Visit Count Initialization ⚠️ LOW PRIORITY
+
+| Aspect | TypeScript | C++ |
+|--------|------------|-----|
+| Initial value | `totalN = 0` | `root->visit_count = 1` |
+
+**Impact**: Minor difference in early `sqrt(totalN + 1)` / `sqrt(visit_count + 1)` values for U term. Negligible effect.
+
+**Fix Required**:
+- [ ] Optional: Initialize `root->visit_count = 0` to match TypeScript
+- [ ] Or: Keep as-is (difference is minimal)
+
+---
+
+#### 5. Temperature-based Move Selection (Design Difference)
+
+| Aspect | TypeScript | C++ |
+|--------|------------|-----|
+| Support | Temperature sampling for training | Always argmax (deterministic) |
+
+**TypeScript**:
+```typescript
+if (temperature < 0.01) -> argmax_N
+else -> sample ~ N(s,a)^(1/τ)
+```
+
+**C++**: Always returns max-visit child.
+
+**Impact**: This is intentional - TypeScript is for training/self-play with exploration, C++ is a deterministic engine.
+
+**Fix Required**:
+- [ ] Optional: Add temperature parameter to C++ for training use
+- [ ] Or: Keep as-is (different use cases)
+
+---
+
+### Consistent Aspects ✅
+
+These aspects are already aligned between implementations:
+
+| Aspect | Status |
+|--------|--------|
+| Value Convention | ✅ Both white-positive, no backup sign flip |
+| PUCT Base Formula | ✅ `(isWhite ? Q : -Q) + cPuct * P * sqrt(N+1)/(1+n)` |
+| Policy Priors | ✅ Both use log scores + softmax |
+| Dirichlet Noise | ✅ α=0.03, ε=0.25, same timing |
+| Node Expansion | ✅ AlphaZero style (all children at once) |
+| Backup | ✅ White-positive, no sign flip |
+
+---
+
+### Implementation Plan
+
+**Phase 5.8.1**: Terminal Detection (HIGH)
+1. Add `checkTerminal()` to `cached_mcts.hpp`
+2. Add `calculateTerminalValue()` with log-scaled territory formula
+3. Modify `search()` to use ground-truth value at terminal states
+4. Test with games that reach natural end
+
+**Phase 5.8.2**: Zero-Prior Handling (MEDIUM)
+1. Remove `-1000` penalty in `select_best_puct_child()`
+2. Test that low-prior but high-value moves can be selected
+3. Verify no regression in normal play
+
+**Phase 5.8.3**: Minor Alignments (LOW)
+1. Optionally align first-child selection behavior
+2. Optionally align root visit count initialization
+3. Optionally add temperature support
+
+**Estimated Effort**: 2-4 hours for Phase 5.8.1-5.8.2
+
+---
+
+### Validation
+
+After fixes, validate consistency:
+1. Run both implementations on same game states
+2. Compare move selection with same NN weights
+3. Compare search statistics (visit counts, Q values)
+4. Run tournament between C++ and TypeScript engines
+
+---
+
