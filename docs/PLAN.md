@@ -691,9 +691,9 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
 
 ---
 
-## Phase 5.8: C++ vs TypeScript MCTS Consistency - IN PROGRESS
+## Phase 5.8: C++ vs TypeScript MCTS Consistency ✅ COMPLETE
 
-**Status**: Phase 5.8.1 & 5.8.2 Complete (HIGH/MEDIUM priority), Phase 5.8.3 Pending (LOW priority)
+**Status**: All HIGH/MEDIUM/LOW priority items complete (December 10, 2025)
 
 **Goal**: Align C++ `cached_mcts.hpp` with TypeScript `mctsAgent.ts` to ensure consistent move selection.
 
@@ -776,26 +776,40 @@ float score = (is_white ? q : -q) + u;
 
 ---
 
-#### 3. Expansion First-Child Selection ⚠️ LOW PRIORITY
+#### 3. Expansion First-Child Selection ✅ COMPLETE
 
 | Aspect | TypeScript | C++ |
 |--------|------------|-----|
-| Selection | Deterministic PUCT (all N=0 initially) | Prior-weighted random sampling |
+| Selection | Deterministic PUCT (all N=0 initially) | ✅ Deterministic highest-prior |
 
-**C++ code** (`expand()`):
+**C++ code** (`expand()`) - UPDATED December 10, 2025:
 ```cpp
-// After creating all children, samples first child by priors
-std::discrete_distribution<size_t> dist(priors.begin(), priors.end());
-size_t idx = dist(rng);
+// Select the first child to traverse: use highest prior (deterministic)
+// TypeScript consistency: After expansion, select() uses PUCT which picks highest P when all N=0
+// This is equivalent to picking the child with highest prior deterministically
+size_t best_idx = 0;
+float best_prior = node->children[0]->prior_prob;
+for (size_t i = 1; i < node->children.size(); i++)
+{
+    if (node->children[i]->prior_prob > best_prior)
+    {
+        best_prior = node->children[i]->prior_prob;
+        best_idx = i;
+    }
+}
+MCTSNode* selected_child = node->children[best_idx].get();
 ```
 
-**TypeScript**: After expansion, `select()` uses deterministic PUCT where all N=0, so highest-prior move is chosen.
+**Fix Applied**:
+- [x] Replaced `std::discrete_distribution` (prior-weighted random) with deterministic highest-prior selection
+- [x] Now matches TypeScript behavior: after expand, PUCT with all N=0 picks highest P
+- [x] Verified highest-prior move (0z, prior=0.196) gets more visits (7 vs 5 before)
 
-**Impact**: With small simulation counts, different moves may be explored first. Converges with many simulations.
-
-**Fix Required**:
-- [ ] Optional: Remove prior-weighted sampling, use highest-prior child deterministically
-- [ ] Or: Keep as-is (valid AlphaZero variant, converges to same result)
+**GPT-5.1 Review Notes**:
+- ✅ Behavior matches TypeScript: PUCT with N=0 gives score = c*P, so highest P wins
+- ✅ Moves closer to canonical AlphaZero behavior (expansion sets priors, selection is pure PUCT)
+- ✅ Reduces randomness in first rollout after expansion → better reproducibility
+- Uses `>` comparison, so first child wins ties (same as TS iteration order)
 
 ---
 
@@ -863,9 +877,9 @@ These aspects are already aligned between implementations:
 2. ✅ Verified low-prior moves can be selected (Pass with prior=0 got visits=1)
 3. ✅ No regression in normal play
 
-**Phase 5.8.3**: Minor Alignments (LOW)
-1. Optionally align first-child selection behavior
-2. Optionally align root visit count initialization
+**Phase 5.8.3**: Minor Alignments ✅ COMPLETE (December 10, 2025)
+1. ✅ Aligned first-child selection: deterministic highest-prior instead of random sampling
+2. Optionally align root visit count initialization (kept as-is, minimal impact)
 3. Optionally add temperature support
 
 **Estimated Effort**: 2-4 hours for Phase 5.8.1-5.8.2

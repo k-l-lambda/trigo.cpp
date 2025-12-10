@@ -367,12 +367,21 @@ private:
 			node->children.push_back(std::move(pass_node));
 		}
 
-		// Select the first child (highest prior due to sampling) for traversal
-		// Use prior-weighted sampling to select which child to visit first
-		std::discrete_distribution<size_t> dist(priors.begin(), priors.end());
-		size_t idx = dist(rng);
+		// Select the first child to traverse: use highest prior (deterministic)
+		// TypeScript consistency: After expansion, select() uses PUCT which picks highest P when all N=0
+		// This is equivalent to picking the child with highest prior deterministically
+		size_t best_idx = 0;
+		float best_prior = node->children[0]->prior_prob;
+		for (size_t i = 1; i < node->children.size(); i++)
+		{
+			if (node->children[i]->prior_prob > best_prior)
+			{
+				best_prior = node->children[i]->prior_prob;
+				best_idx = i;
+			}
+		}
 
-		MCTSNode* selected_child = node->children[idx].get();
+		MCTSNode* selected_child = node->children[best_idx].get();
 
 		// Apply selected move to game
 		if (selected_child->is_pass)
