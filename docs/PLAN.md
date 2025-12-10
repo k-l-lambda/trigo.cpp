@@ -813,17 +813,31 @@ MCTSNode* selected_child = node->children[best_idx].get();
 
 ---
 
-#### 4. Root Visit Count Initialization ⚠️ LOW PRIORITY
+#### 4. Root Visit Count Initialization ✅ COMPLETE
 
 | Aspect | TypeScript | C++ |
 |--------|------------|-----|
-| Initial value | `totalN = 0` | `root->visit_count = 1` |
+| Initial value | `totalN = 0` (sum of child N values) | ✅ `visit_count = 0` (default) |
 
-**Impact**: Minor difference in early `sqrt(totalN + 1)` / `sqrt(visit_count + 1)` values for U term. Negligible effect.
+**C++ code** (`search()`) - UPDATED December 10, 2025:
+```cpp
+// Create root node
+root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false);
+// NOTE: root->visit_count defaults to 0 (matches TypeScript totalN=0 initially)
+// TypeScript: totalN = sum of all child N values, starts at 0
+// PUCT uses sqrt(totalN + 1), so initial U = c * P * sqrt(1) / 1 = c * P
+```
 
-**Fix Required**:
-- [ ] Optional: Initialize `root->visit_count = 0` to match TypeScript
-- [ ] Or: Keep as-is (difference is minimal)
+**Fix Applied**:
+- [x] Removed `root->visit_count = 1` initialization
+- [x] Root now defaults to visit_count=0 (matches TypeScript totalN=0)
+- [x] Initial U term now matches: `sqrt(0 + 1) / 1 = 1` instead of `sqrt(1 + 1) / 1 = 1.414`
+
+**GPT-5.1 Review Notes**:
+- ✅ Mathematically consistent with PUCT formula
+- ✅ Removes off-by-sqrt(2) mismatch at root
+- ✅ Backprop will naturally increment root from 0→1 on first simulation
+- First backup now sets root 0→1 instead of 1→2 (standard MCTS behavior)
 
 ---
 
@@ -879,8 +893,8 @@ These aspects are already aligned between implementations:
 
 **Phase 5.8.3**: Minor Alignments ✅ COMPLETE (December 10, 2025)
 1. ✅ Aligned first-child selection: deterministic highest-prior instead of random sampling
-2. Optionally align root visit count initialization (kept as-is, minimal impact)
-3. Optionally add temperature support
+2. ✅ Aligned root visit count: init to 0 instead of 1 (matches TypeScript totalN=0)
+3. Optionally add temperature support (design difference, kept as-is)
 
 **Estimated Effort**: 2-4 hours for Phase 5.8.1-5.8.2
 

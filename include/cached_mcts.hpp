@@ -89,7 +89,9 @@ public:
 	{
 		// Create root node
 		root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false);
-		root->visit_count = 1;  // Root is always visited
+		// NOTE: root->visit_count defaults to 0 (matches TypeScript totalN=0 initially)
+		// TypeScript: totalN = sum of all child N values, starts at 0
+		// PUCT uses sqrt(totalN + 1), so initial U = c * P * sqrt(1) / 1 = c * P
 
 		bool dirichlet_applied = false;  // Track if Dirichlet noise has been added
 
