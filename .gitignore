@@ -58,7 +58,7 @@ build_release/
 # ONNX Runtime download
 onnxruntime-*.tgz
 onnxruntime-*.tar.gz
-onnxruntime-linux-x64-gpu-*/
+onnxruntime-linux-x64-*
 *.tgz.1
 *.tgz.aria2
 

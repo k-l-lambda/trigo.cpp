@@ -307,3 +307,70 @@ PrefixCacheInferencer (cached-mcts):
   Device: CPU only
   Cache dimensions: 6 layers, 8 heads, 8 head_dim
 ```
+
+---
+
+## H100 GPU Benchmark (December 11, 2025)
+
+Additional benchmark on NVIDIA H100 80GB HBM3 datacenter GPU.
+
+### Test Environment
+
+| Parameter | Value |
+|-----------|-------|
+| GPU | NVIDIA H100 80GB HBM3 |
+| CUDA | 12.9 |
+| ONNX Runtime | 1.20.0 (GPU) |
+| Board | 5x5x1 |
+| Games | 10 |
+| MCTS Simulations | 50 |
+| Seed | 42 |
+
+### Results
+
+| Mode | Duration | Games/sec | Time/Move | Avg Moves |
+|------|----------|-----------|-----------|-----------|
+| **GPU (H100)** | **25s** | **0.40** | **83ms** | 30.1 |
+| **CPU** | 71s | 0.14 | 236ms | 30.1 |
+
+### Comparison: H100 vs RTX 3090
+
+| Metric | H100 (GPU) | RTX 3090 (GPU) | H100 Speedup |
+|--------|------------|----------------|--------------|
+| Duration | 25s | 45s | **1.8×** |
+| Games/sec | 0.40 | 0.22 | **1.8×** |
+| Time/Move | 83ms | 150ms | **1.8×** |
+
+### Key Finding: GPU vs CPU Depends on Hardware
+
+| Hardware | GPU vs CPU | Recommendation |
+|----------|------------|----------------|
+| **H100** | GPU 2.84× faster | Use GPU mode |
+| **RTX 3090** | CPU 1.2× faster | Use CPU mode (`TRIGO_FORCE_CPU=1`) |
+
+**Analysis:**
+- H100 is a datacenter GPU optimized for inference with lower kernel launch latency
+- RTX 3090 is a consumer GPU where small batch inference has higher overhead
+- The original conclusion "CPU is faster than GPU" only applies to consumer GPUs
+
+### Raw Output
+
+**H100 GPU:**
+```
+=== Generation Complete ===
+Total games: 10
+Total moves: 301
+Average moves per game: 30.1
+Time elapsed: 25 seconds
+Games per second: 0.4
+```
+
+**CPU:**
+```
+=== Generation Complete ===
+Total games: 10
+Total moves: 301
+Average moves per game: 30.1
+Time elapsed: 71 seconds
+Games per second: 0.140845
+```
