@@ -149,7 +149,7 @@ public:
 			// Make a copy of game state for simulation
 			TrigoGame game_copy = game;
 
-			// 1. Selection: Traverse tree using PUCT
+			// 1. Selection: Traverse tree using PUCT until unexpanded node
 			MCTSNode* node = select(root.get(), game_copy);
 
 #ifdef MCTS_ENABLE_PROFILING
@@ -158,10 +158,10 @@ public:
 			).count();
 #endif
 
-			// 2. Expansion: Add new child node with policy prior
-			if (game_copy.is_game_active() && node->visit_count > 0)
+			// 2. Expansion: Create all children if this is an unexpanded node
+			if (game_copy.is_game_active() && !node->is_fully_expanded)
 			{
-				node = expand(node, game_copy);
+				expand(node, game_copy);
 
 				// Apply Dirichlet noise to root immediately after first expansion
 				// AlphaZero style: add noise as soon as root children exist
@@ -169,6 +169,24 @@ public:
 				{
 					add_dirichlet_noise_to_root();
 					dirichlet_applied = true;
+				}
+
+				// After expansion, use PUCT to select a child to evaluate
+				// This is the key change: PUCT now guides selection even for N=0 nodes
+				if (!node->children.empty())
+				{
+					bool is_white = (game_copy.get_current_player() == Stone::White);
+					node = select_best_puct_child(node, is_white);
+
+					// Apply the selected move to game state
+					if (node->is_pass)
+					{
+						game_copy.pass();
+					}
+					else
+					{
+						game_copy.drop(node->move);
+					}
 				}
 			}
 
@@ -291,38 +309,28 @@ private:
 
 
 	/**
-	 * Expansion phase: Add one new child node with policy prior
+	 * Expansion phase: Create all child nodes with policy priors
 	 *
-	 * Uses policy network to get priors for all valid moves
+	 * AlphaZero-style expansion:
+	 * - Creates ALL children at once on first visit
+	 * - Marks node as fully_expanded immediately
+	 * - Returns the node itself (selection will use PUCT to pick child)
+	 *
+	 * This differs from traditional MCTS which visits each child once before
+	 * using UCT. AlphaZero relies on policy priors to guide exploration from
+	 * the start, which is more efficient for games with large branching factors.
+	 *
+	 * December 11, 2025: Fixed to match TypeScript mctsAgent.ts behavior.
+	 * Previously forced visiting each child once before PUCT, which:
+	 * 1. Ignored policy network guidance for first K simulations
+	 * 2. Made Dirichlet noise ineffective during forced expansion
 	 */
 	MCTSNode* expand(MCTSNode* node, TrigoGame& game)
 	{
-		// AlphaZero-style: Expand ALL children at once on first visit
-		// This avoids the prior renormalization issue where the last move gets prior=1.0
-
-		// If already expanded, select a child to traverse
+		// If already has children, node is already expanded
+		// (This shouldn't happen if is_fully_expanded is set correctly)
 		if (!node->children.empty())
 		{
-			// Node already has children, select one for traversal
-			// Find an unexpanded child (visit_count == 0)
-			for (auto& child : node->children)
-			{
-				if (child->visit_count == 0)
-				{
-					// Apply this move to game
-					if (child->is_pass)
-					{
-						game.pass();
-					}
-					else
-					{
-						game.drop(child->move);
-					}
-					return child.get();
-				}
-			}
-
-			// All children visited at least once, mark as fully expanded
 			node->is_fully_expanded = true;
 			return node;
 		}
@@ -333,7 +341,7 @@ private:
 
 		if (valid_moves.empty() && !can_pass)
 		{
-			// No moves available
+			// No moves available (terminal state)
 			node->is_fully_expanded = true;
 			return node;
 		}
@@ -371,33 +379,15 @@ private:
 			node->children.push_back(std::move(pass_node));
 		}
 
-		// Select the first child to traverse: use highest prior (deterministic)
-		// TypeScript consistency: After expansion, select() uses PUCT which picks highest P when all N=0
-		// This is equivalent to picking the child with highest prior deterministically
-		size_t best_idx = 0;
-		float best_prior = node->children[0]->prior_prob;
-		for (size_t i = 1; i < node->children.size(); i++)
-		{
-			if (node->children[i]->prior_prob > best_prior)
-			{
-				best_prior = node->children[i]->prior_prob;
-				best_idx = i;
-			}
-		}
+		// Mark as fully expanded immediately (AlphaZero style)
+		// Selection will now use PUCT to choose among children
+		// When all N=0, PUCT reduces to: score = c * P * sqrt(1) = c * P
+		// So highest prior child is selected (same as before, but now via PUCT)
+		node->is_fully_expanded = true;
 
-		MCTSNode* selected_child = node->children[best_idx].get();
-
-		// Apply selected move to game
-		if (selected_child->is_pass)
-		{
-			game.pass();
-		}
-		else
-		{
-			game.drop(selected_child->move);
-		}
-
-		return selected_child;
+		// Return this node - the main loop will call select() again,
+		// which will use PUCT to pick the best child
+		return node;
 	}
 
 
