@@ -658,36 +658,30 @@ All Phase 5 objectives (5.1-5.6) have been completed successfully:
 
 ---
 
-**Last Updated**: December 8, 2025, 15:32 CST
+**Last Updated**: December 11, 2025
 
 **Current Status**:
 - Phase 4 MCTS Benchmarking complete - C++ CPU is 6.59× faster than TypeScript
 - Phase 5 KV Cache (5.1-5.6) complete - Full stack from Python to C++ production-ready
-- **Phase 5.7 complete** - Shared cache for policy + value networks
-- **Phase 5.4 Achievement**: 1.46-1.52× speedup (30-34% faster) with prefix cache (Python)
-- **Phase 5.5 Achievement**: Performance parity with Python, 10× more stable (C++)
-- **Phase 5.6 Achievement**: 3.4× speedup for MCTS pattern, dynamic shape support, production integration
-- **Phase 5.7 Achievement**: 1.95× additional speedup through value cache sharing
-- All tests passing - Production-ready C++ implementation with comprehensive test suite
+- Phase 5.7 complete - Shared cache for policy + value networks
+- Phase 5.8 complete - C++ vs TypeScript MCTS consistency
+- **Phase 5.9 complete** - MCTS expansion strategy fix (AlphaZero-style)
+- **Phase 5.10 TODO** - Prefix cache correct usage (CRITICAL BUG)
 
-**Production Ready**: C++ MCTS + shared KV cache (policy + value) fully integrated and tested
+**Critical Finding (Dec 11, 2025)**:
+- Prefix cache is NOT being used as a cache - recomputed every time
+- `cached-mcts` is 2× SLOWER than `alphazero` due to this bug
+- Fix required: Use suffix tokens with existing cache, don't recompute
+
+**Production Ready**: Use `alphazero` policy (not `cached-mcts`) until Phase 5.10 is complete
 
 **Overall Performance**:
 - Original TypeScript: 1846 ms per move (baseline)
-- Phase 4 (C++ base): 280 ms (6.59× speedup)
-- Phase 5.6 (policy cache): ~200 ms (9.23× speedup)
-- **Phase 5.7 (policy + value cache): ~150 ms (~12.3× speedup)**
-- **Combined: ~12-13× faster than original TypeScript**
+- C++ alphazero (GPU): 150 ms per move (12.3× speedup)
+- C++ alphazero (CPU): 179 ms per move (10.3× speedup)
+- C++ cached-mcts (BROKEN): 333 ms per move (5.5× speedup, should be faster after fix)
 
-**Comprehensive Benchmark**: `tools/benchmark_cache_comparison.sh` - All tests passed ✅
-- Value inference: 0.42-0.85 ms per evaluation
-- CachedAlphaZeroPolicy: 5.21 ms average (GPU)
-- Cache sharing validated (no additional memory overhead)
-
-**Next Step**:
-- **Recommended**: Deploy to production for large-scale self-play generation
-- **Alternative**: Full MCTS integration with shared cache
-- **Future**: Phase 6 - Batch inference and GPU optimization
+**Next Step**: Phase 5.10 - Fix prefix cache usage to achieve expected 2-3× speedup
 
 ---
 
@@ -921,6 +915,216 @@ After fixes, validate consistency:
 2. Compare move selection with same NN weights
 3. Compare search statistics (visit counts, Q values)
 4. Run tournament between C++ and TypeScript engines
+
+---
+
+## Phase 5.9: MCTS Expansion Strategy Fix ✅ COMPLETE
+
+**Status**: ✅ COMPLETE (December 11, 2025)
+
+**Goal**: Fix C++ MCTS expansion strategy to match TypeScript AlphaZero behavior.
+
+**Background**: GPT-5.1 and Gemini-3-Pro code review identified that C++ used "Traditional MCTS" expansion while TypeScript used "AlphaZero-style" expansion.
+
+### Problem Identified
+
+**Traditional MCTS (C++ before fix)**:
+```cpp
+// Forced visiting every child with visit_count==0 before using PUCT
+for (child : node->children) {
+    if (child->visit_count == 0) {
+        return child;  // Wrong: ignores policy priors!
+    }
+}
+// Then use PUCT
+```
+
+**AlphaZero-style (TypeScript / correct)**:
+```typescript
+// Use PUCT immediately after expansion
+// When all N=0, PUCT score = c * P * sqrt(1) / 1 = c * P
+// So highest-prior child is selected (policy network guides exploration)
+```
+
+### Issues Caused
+
+1. **Policy network guidance ignored** for first K simulations (K = number of children)
+2. **Dirichlet noise ineffective** during forced expansion phase
+
+### Fix Applied
+
+Modified `cached_mcts.hpp`:
+
+1. **`expand()` function**: Mark node as `is_fully_expanded = true` immediately after creating children (don't return a child directly)
+
+2. **Main simulation loop**: After expansion, use PUCT to select child:
+```cpp
+if (game_copy.is_game_active() && !node->is_fully_expanded)
+{
+    expand(node, game_copy);
+
+    // Apply Dirichlet noise after first expansion
+    if (!dirichlet_applied && !root->children.empty())
+    {
+        add_dirichlet_noise_to_root();
+        dirichlet_applied = true;
+    }
+
+    // Use PUCT to select child (key change!)
+    if (!node->children.empty())
+    {
+        bool is_white = (game_copy.get_current_player() == Stone::White);
+        node = select_best_puct_child(node, is_white);
+        // Apply selected move...
+    }
+}
+```
+
+### Performance Impact
+
+| Metric | Before (Dec 5) | After (Dec 11) | Change |
+|--------|----------------|----------------|--------|
+| Total Duration | 117.1s | 93s | **-20.6%** |
+| Games/sec | 0.085 | 0.108 | **+26.5%** |
+| Time/Move | 280ms | 333ms | +18.9% |
+| Avg Moves/Game | 41.8 | 27.9 | -33.3% |
+
+**Analysis**:
+- Per-move time increased (correct algorithm has more overhead)
+- But games are shorter (better play quality with proper policy guidance)
+- Overall throughput improved by 26.5%
+
+### Additional Fix: Model Loading Optimization
+
+Also fixed `self_play_generator.cpp` to load ONNX models once instead of per-game:
+
+```cpp
+// Before: Models loaded for each game
+void generate_one_game(int game_id) {
+    auto black = PolicyFactory::create(...);  // Load models!
+    auto white = PolicyFactory::create(...);  // Load models!
+}
+
+// After: Models loaded once
+void generate() {
+    auto black = PolicyFactory::create(...);  // Load once
+    auto white = PolicyFactory::create(...);  // Load once
+
+    for (int i = 0; i < num_games; i++) {
+        generate_one_game(i, black.get(), white.get());
+    }
+}
+```
+
+### Documentation
+
+- `docs/PERFORMANCE_ANALYSIS-1211.md` - Full benchmark results
+
+---
+
+## Phase 5.10: Prefix Cache Correct Usage - TODO
+
+**Status**: NOT STARTED
+
+**Goal**: Fix prefix cache to actually be used as a cache, not recomputed every time.
+
+### Problem Identified
+
+Current implementation **recomputes prefix cache on every call**, defeating the purpose:
+
+```cpp
+// In evaluate_with_cache() - WRONG:
+float evaluate_with_cache(TrigoGame& game) {
+    auto tokens = game_to_tokens(game);  // Full sequence
+    inferencer->compute_prefix_cache(tokens, 1, seq_len);  // Recomputes EVERY time!
+    return inferencer->value_inference_with_cache(3);
+}
+
+// In expand() - WRONG:
+inferencer->compute_prefix_cache(current_tokens, 1, ...);  // Recomputes EVERY time!
+```
+
+### Performance Impact (Current Bug)
+
+| Policy | Device | Duration | Games/sec | Time/Move |
+|--------|--------|----------|-----------|-----------|
+| **cached-mcts** (broken cache) | CPU | 93s | 0.108 | 333ms |
+| **alphazero** (no cache) | GPU | 45s | 0.222 | 150ms |
+| **alphazero** (no cache) | CPU | 54s | 0.185 | 179ms |
+
+**The "cached" version is actually 2× SLOWER** because it runs the prefix model twice per inference.
+
+### Correct Usage
+
+The prefix cache is designed for this pattern:
+
+```
+Root position:  [START, 1., aa, 2., bb, ...]        ← Compute cache ONCE
+Depth 3:        [START, 1., aa, 2., bb, 3., cc, 4., dd, ...]
+                ^^^^^^^^^^^^^^^^^^^^^^
+                This is the cached prefix!
+                                       ^^^^^^^^^^^^
+                                       This is the suffix (evaluated_ids)
+```
+
+**Correct implementation**:
+```cpp
+float evaluate_with_cache(TrigoGame& game, int root_seq_len) {
+    auto tokens = game_to_tokens(game);
+
+    // Extract suffix (tokens after root)
+    std::vector<int64_t> suffix(tokens.begin() + root_seq_len, tokens.end());
+
+    // Use existing cache + suffix (DON'T recompute cache!)
+    auto hidden = inferencer->evaluate_with_cache(suffix, mask, 1, suffix.size());
+
+    // Get value from hidden states
+    return extract_value(hidden);
+}
+```
+
+### Implementation Tasks
+
+1. **Store root_seq_len** in CachedMCTS class
+   - Set when `compute_prefix_cache()` is called at root
+   - Used to split tokens into prefix/suffix
+
+2. **Modify `evaluate_with_cache()`**
+   - Accept `root_seq_len` parameter
+   - Extract suffix tokens (after root)
+   - Call `inferencer->evaluate_with_cache()` with suffix only
+   - Do NOT call `compute_prefix_cache()`
+
+3. **Modify `expand()`**
+   - Same approach: extract suffix, use existing cache
+   - Remove the `compute_prefix_cache()` call
+
+4. **Handle edge cases**
+   - What if position is shorter than root? (shouldn't happen in MCTS)
+   - What if cache is invalidated? (add validation check)
+
+5. **Benchmark**
+   - Expected: cached-mcts should be faster than alphazero
+   - Target: 2-3× speedup over current broken implementation
+
+### ONNX Model Changes
+
+**NOT REQUIRED** - The existing ONNX models already support this:
+- `base_model_prefix.onnx`: prefix_ids → KV cache
+- `base_model_eval_cached.onnx`: KV cache + evaluated_ids → hidden_states
+
+The models are correct; only the C++ calling code needs to be fixed.
+
+### Expected Performance (After Fix)
+
+| Policy | Expected Time/Move | Expected Speedup |
+|--------|-------------------|------------------|
+| cached-mcts (fixed) | ~100-150ms | 2-3× vs current |
+| alphazero (GPU) | 150ms | baseline |
+
+**Priority**: HIGH - This is a significant performance bug that makes the cache feature useless.
+
+**Estimated Effort**: 2-4 hours
 
 ---
 
