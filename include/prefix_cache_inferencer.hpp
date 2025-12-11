@@ -92,6 +92,7 @@ public:
 	 * @param use_gpu Enable CUDA execution provider
 	 * @param device_id GPU device ID
 	 * @param evaluation_model_path Path to evaluation.onnx for direct value inference (optional)
+	 * @param eval_extend_model_path Path to base_model_eval_extend.onnx for incremental cache (optional)
 	 */
 	PrefixCacheInferencer(
 		const std::string& prefix_model_path,
@@ -100,7 +101,8 @@ public:
 		const std::string& value_head_path = "",
 		bool use_gpu = true,
 		int device_id = 0,
-		const std::string& evaluation_model_path = ""
+		const std::string& evaluation_model_path = "",
+		const std::string& eval_extend_model_path = ""
 	);
 
 	~PrefixCacheInferencer() = default;
@@ -157,6 +159,31 @@ public:
 
 
 	/**
+	 * Extend cache with new tokens (incremental cache update)
+	 *
+	 * Runs eval_extend model: cache + new_tokens → hidden_states + new_cache
+	 * Cache is updated internally with the new KV tensors.
+	 *
+	 * Used for incremental self-play where the game state grows:
+	 *   1. Start game: compute_prefix_cache([START])
+	 *   2. After each move: extend_cache([move_tokens])
+	 *   3. Cache grows incrementally without recomputation
+	 *
+	 * @param new_token_ids New tokens to add [batch, new_len]
+	 * @param new_mask Attention mask for new tokens [batch, new_len, new_len]
+	 * @param batch_size Batch size
+	 * @param new_len Number of new tokens
+	 * @return Hidden states for new tokens [batch, new_len+1, hidden_dim]
+	 */
+	std::vector<float> extend_cache(
+		const std::vector<int64_t>& new_token_ids,
+		const std::vector<float>& new_mask,
+		int batch_size,
+		int new_len
+	);
+
+
+	/**
 	 * Direct value inference using evaluation model
 	 *
 	 * Uses a separate evaluation model that directly processes the full sequence.
@@ -178,6 +205,12 @@ public:
 	 * Check if evaluation model is loaded
 	 */
 	bool has_evaluation_model() const { return evaluation_session_ != nullptr; }
+
+
+	/**
+	 * Check if eval_extend model is loaded (for incremental cache)
+	 */
+	bool has_extend_model() const { return eval_extend_session_ != nullptr; }
 
 
 	/**
@@ -242,7 +275,7 @@ public:
 	struct CacheDimensions {
 		int num_layers;
 		int num_heads;
-		int prefix_len;
+		int seq_len;      // Current cached sequence length (may grow after extend_cache)
 		int head_dim;
 		int batch_size;
 	};
@@ -293,6 +326,7 @@ private:
 
 	std::unique_ptr<Ort::Session> prefix_session_;
 	std::unique_ptr<Ort::Session> eval_cached_session_;
+	std::unique_ptr<Ort::Session> eval_extend_session_;  // For incremental cache extension
 	std::unique_ptr<Ort::Session> policy_session_;
 	std::unique_ptr<Ort::Session> value_session_;  // Optional
 	std::unique_ptr<Ort::Session> evaluation_session_;  // Direct value inference (optional)
@@ -307,8 +341,8 @@ private:
 	// Cache state
 	bool cache_ready_;
 	CacheDimensions cache_dims_;
-	std::vector<std::vector<float>> cached_keys_;   // [num_layers][batch * num_heads * prefix_len * head_dim]
-	std::vector<std::vector<float>> cached_values_; // [num_layers][batch * num_heads * prefix_len * head_dim]
+	std::vector<std::vector<float>> cached_keys_;   // [num_layers][batch * num_heads * seq_len * head_dim]
+	std::vector<std::vector<float>> cached_values_; // [num_layers][batch * num_heads * seq_len * head_dim]
 
 	// Performance tracking
 	PrefixCacheMetrics metrics_;

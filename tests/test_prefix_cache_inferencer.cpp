@@ -55,7 +55,7 @@ void test_basic_functionality(trigo::PrefixCacheInferencer& inferencer)
 	std::cout << "  Cache dimensions:" << std::endl;
 	std::cout << "    Layers: " << cache_dims.num_layers << std::endl;
 	std::cout << "    Heads: " << cache_dims.num_heads << std::endl;
-	std::cout << "    Prefix len: " << cache_dims.prefix_len << std::endl;
+	std::cout << "    Seq len: " << cache_dims.seq_len << std::endl;
 	std::cout << "    Head dim: " << cache_dims.head_dim << std::endl;
 
 	// Step 2: Evaluate with cache
@@ -160,8 +160,8 @@ void test_mcts_pattern(trigo::PrefixCacheInferencer& inferencer)
 	}
 
 	auto cache_dims = inferencer.get_cache_dimensions();
-	if (cache_dims.prefix_len != prefix_len) {
-		std::cerr << "  ✗ Cache length changed: " << cache_dims.prefix_len
+	if (cache_dims.seq_len != prefix_len) {
+		std::cerr << "  ✗ Cache length changed: " << cache_dims.seq_len
 		          << " (expected " << prefix_len << ")" << std::endl;
 		return;
 	}

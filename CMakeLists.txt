@@ -629,3 +629,33 @@ set_target_properties(test_terminal_detection PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
+
+# Test extend_cache() functionality (Phase 5.10)
+add_executable(test_extend_cache tests/test_extend_cache.cpp)
+target_link_libraries(test_extend_cache PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_extend_cache PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_extend_cache PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test incremental cache consistency (Phase 5.10)
+add_executable(test_incremental_consistency tests/test_incremental_consistency.cpp)
+target_link_libraries(test_incremental_consistency PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_incremental_consistency PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_incremental_consistency PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)

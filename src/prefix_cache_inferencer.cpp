@@ -16,7 +16,8 @@ PrefixCacheInferencer::PrefixCacheInferencer(
 	const std::string& value_head_path,
 	bool use_gpu,
 	int device_id,
-	const std::string& evaluation_model_path
+	const std::string& evaluation_model_path,
+	const std::string& eval_extend_model_path
 )
 	: env_(ORT_LOGGING_LEVEL_WARNING, "PrefixCacheInferencer")
 	, use_gpu_(use_gpu)
@@ -103,6 +104,20 @@ PrefixCacheInferencer::PrefixCacheInferencer(
 		}
 	}
 
+	// Load eval_extend model (optional, for incremental cache)
+	if (!eval_extend_model_path.empty()) {
+		try {
+			#ifdef _WIN32
+			std::wstring extend_path_w(eval_extend_model_path.begin(), eval_extend_model_path.end());
+			eval_extend_session_ = std::make_unique<Ort::Session>(env_, extend_path_w.c_str(), session_options_);
+			#else
+			eval_extend_session_ = std::make_unique<Ort::Session>(env_, eval_extend_model_path.c_str(), session_options_);
+			#endif
+		} catch (const Ort::Exception& e) {
+			std::cerr << "Warning: Failed to load eval_extend model: " << e.what() << std::endl;
+		}
+	}
+
 	// Get cache dimensions from eval_cached model inputs
 	// Expected inputs: evaluated_ids, evaluated_mask, past_key_0, past_value_0, past_key_1, ...
 	size_t num_inputs = eval_cached_session_->GetInputCount();
@@ -121,7 +136,7 @@ PrefixCacheInferencer::PrefixCacheInferencer(
 			// Shape: [batch, num_heads, prefix_len, head_dim]
 			cache_dims_.batch_size = static_cast<int>(shape[0]);
 			cache_dims_.num_heads = static_cast<int>(shape[1]);
-			cache_dims_.prefix_len = static_cast<int>(shape[2]);
+			cache_dims_.seq_len = static_cast<int>(shape[2]);
 			cache_dims_.head_dim = static_cast<int>(shape[3]);
 
 			// Count number of layers
@@ -147,6 +162,9 @@ PrefixCacheInferencer::PrefixCacheInferencer(
 	}
 	if (evaluation_session_) {
 		std::cout << "  Evaluation model: " << evaluation_model_path << std::endl;
+	}
+	if (eval_extend_session_) {
+		std::cout << "  Eval-extend model: " << eval_extend_model_path << std::endl;
 	}
 	std::cout << "  Device: " << (use_gpu_ ? "GPU" : "CPU") << std::endl;
 	std::cout << "  Cache dimensions: " << cache_dims_.num_layers << " layers, "
@@ -228,7 +246,7 @@ void PrefixCacheInferencer::compute_prefix_cache(
 
 	cache_ready_ = true;
 	cache_dims_.batch_size = batch_size;
-	cache_dims_.prefix_len = prefix_len;
+	cache_dims_.seq_len = prefix_len;
 
 	auto end = std::chrono::high_resolution_clock::now();
 	double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
@@ -291,7 +309,7 @@ std::vector<float> PrefixCacheInferencer::evaluate_with_cache(
 	std::vector<int64_t> cache_shape = {
 		cache_dims_.batch_size,
 		cache_dims_.num_heads,
-		cache_dims_.prefix_len,
+		cache_dims_.seq_len,
 		cache_dims_.head_dim
 	};
 
@@ -568,7 +586,7 @@ void PrefixCacheInferencer::print_model_info() const
 	std::cout << "  Layers: " << cache_dims_.num_layers << std::endl;
 	std::cout << "  Heads: " << cache_dims_.num_heads << std::endl;
 	std::cout << "  Head dim: " << cache_dims_.head_dim << std::endl;
-	std::cout << "  Prefix len: " << cache_dims_.prefix_len << std::endl;
+	std::cout << "  Seq len: " << cache_dims_.seq_len << std::endl;
 
 	std::cout << "========================================\n" << std::endl;
 }
@@ -656,6 +674,199 @@ std::vector<float> PrefixCacheInferencer::policy_inference_from_hidden(
 	std::vector<float> logits(logits_ptr, logits_ptr + logits_size);
 
 	return logits;
+}
+
+
+std::vector<float> PrefixCacheInferencer::extend_cache(
+	const std::vector<int64_t>& new_token_ids,
+	const std::vector<float>& new_mask,
+	int batch_size,
+	int new_len
+)
+{
+	if (!cache_ready_) {
+		throw std::runtime_error("Cache not ready. Call compute_prefix_cache() first.");
+	}
+
+	if (!eval_extend_session_) {
+		throw std::runtime_error("Eval-extend model not loaded. Provide eval_extend_model_path in constructor.");
+	}
+
+	// Input shape validation
+	size_t expected_ids_size = static_cast<size_t>(batch_size) * new_len;
+	if (new_token_ids.size() != expected_ids_size) {
+		throw std::runtime_error(
+			"new_token_ids size mismatch: expected " + std::to_string(expected_ids_size) +
+			" (batch_size=" + std::to_string(batch_size) + " * new_len=" + std::to_string(new_len) +
+			"), got " + std::to_string(new_token_ids.size())
+		);
+	}
+
+	size_t expected_mask_size = static_cast<size_t>(batch_size) * new_len * new_len;
+	if (new_mask.size() != expected_mask_size) {
+		throw std::runtime_error(
+			"new_mask size mismatch: expected " + std::to_string(expected_mask_size) +
+			" (batch_size=" + std::to_string(batch_size) + " * new_len=" + std::to_string(new_len) +
+			" * new_len), got " + std::to_string(new_mask.size())
+		);
+	}
+
+	auto start = std::chrono::high_resolution_clock::now();
+
+	// Prepare input tensors
+	Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(
+		OrtArenaAllocator, OrtMemTypeDefault);
+
+	// 1. evaluated_ids [batch, new_len]
+	std::vector<int64_t> ids_shape = {batch_size, new_len};
+	auto ids_tensor = Ort::Value::CreateTensor<int64_t>(
+		memory_info,
+		const_cast<int64_t*>(new_token_ids.data()),
+		new_token_ids.size(),
+		ids_shape.data(),
+		ids_shape.size()
+	);
+
+	// 2. evaluated_mask [batch, new_len, new_len]
+	std::vector<int64_t> mask_shape = {batch_size, new_len, new_len};
+	auto mask_tensor = Ort::Value::CreateTensor<float>(
+		memory_info,
+		const_cast<float*>(new_mask.data()),
+		new_mask.size(),
+		mask_shape.data(),
+		mask_shape.size()
+	);
+
+	// 3. Cache tensors (past_key_i, past_value_i for each layer)
+	std::vector<Ort::Value> cache_tensors;
+	std::vector<int64_t> cache_shape = {
+		cache_dims_.batch_size,
+		cache_dims_.num_heads,
+		cache_dims_.seq_len,
+		cache_dims_.head_dim
+	};
+
+	for (int i = 0; i < cache_dims_.num_layers; i++) {
+		// past_key_i
+		cache_tensors.push_back(Ort::Value::CreateTensor<float>(
+			memory_info,
+			const_cast<float*>(cached_keys_[i].data()),
+			cached_keys_[i].size(),
+			cache_shape.data(),
+			cache_shape.size()
+		));
+
+		// past_value_i
+		cache_tensors.push_back(Ort::Value::CreateTensor<float>(
+			memory_info,
+			const_cast<float*>(cached_values_[i].data()),
+			cached_values_[i].size(),
+			cache_shape.data(),
+			cache_shape.size()
+		));
+	}
+
+	// Prepare all input tensors
+	std::vector<Ort::Value> input_tensors;
+	input_tensors.push_back(std::move(ids_tensor));
+	input_tensors.push_back(std::move(mask_tensor));
+	for (auto& cache_tensor : cache_tensors) {
+		input_tensors.push_back(std::move(cache_tensor));
+	}
+
+	// Get input names
+	size_t num_inputs = eval_extend_session_->GetInputCount();
+	std::vector<Ort::AllocatedStringPtr> input_name_ptrs;
+	std::vector<const char*> input_names;
+
+	for (size_t i = 0; i < num_inputs; i++) {
+		input_name_ptrs.push_back(eval_extend_session_->GetInputNameAllocated(i, allocator_));
+		input_names.push_back(input_name_ptrs.back().get());
+	}
+
+	// Get output names (hidden_states + present cache)
+	size_t num_outputs = eval_extend_session_->GetOutputCount();
+	std::vector<Ort::AllocatedStringPtr> output_name_ptrs;
+	std::vector<const char*> output_names;
+
+	for (size_t i = 0; i < num_outputs; i++) {
+		output_name_ptrs.push_back(eval_extend_session_->GetOutputNameAllocated(i, allocator_));
+		output_names.push_back(output_name_ptrs.back().get());
+	}
+
+	// Run eval_extend model
+	auto output_tensors = eval_extend_session_->Run(
+		Ort::RunOptions{nullptr},
+		input_names.data(),
+		input_tensors.data(),
+		input_tensors.size(),
+		output_names.data(),
+		output_names.size()
+	);
+
+	// Extract hidden states (first output)
+	auto& hidden_states_tensor = output_tensors[0];
+	auto hidden_states_shape = hidden_states_tensor.GetTensorTypeAndShapeInfo().GetShape();
+	// Shape: [batch, new_len+1, hidden_dim] (includes dummy prefix_last token)
+
+	int output_seq_len = static_cast<int>(hidden_states_shape[1]);
+	int hidden_dim = static_cast<int>(hidden_states_shape[2]);
+	auto hidden_data = hidden_states_tensor.GetTensorData<float>();
+	size_t hidden_states_size = batch_size * output_seq_len * hidden_dim;
+	std::vector<float> hidden_states(hidden_data, hidden_data + hidden_states_size);
+
+	// Update cache with present KV tensors
+	// Output format: hidden_states, present_key_0, present_value_0, present_key_1, present_value_1, ...
+	cached_keys_.clear();
+	cached_values_.clear();
+
+	for (size_t i = 1; i < output_tensors.size(); i += 2) {
+		// present_key_i
+		auto& key_tensor = output_tensors[i];
+		auto key_data = key_tensor.GetTensorData<float>();
+		auto key_shape = key_tensor.GetTensorTypeAndShapeInfo().GetShape();
+		size_t key_size = std::accumulate(key_shape.begin(), key_shape.end(), 1LL, std::multiplies<int64_t>());
+
+		std::vector<float> key_vec(key_data, key_data + key_size);
+		cached_keys_.push_back(std::move(key_vec));
+
+		// present_value_i
+		auto& value_tensor = output_tensors[i + 1];
+		auto value_data = value_tensor.GetTensorData<float>();
+		auto value_shape = value_tensor.GetTensorTypeAndShapeInfo().GetShape();
+		size_t value_size = std::accumulate(value_shape.begin(), value_shape.end(), 1LL, std::multiplies<int64_t>());
+
+		std::vector<float> value_vec(value_data, value_data + value_size);
+		cached_values_.push_back(std::move(value_vec));
+	}
+
+	// Update cache dimensions with new length
+	// The new cache length = old_prefix_len + 1 (dummy) + new_len
+	if (!cached_keys_.empty()) {
+		auto key_shape = output_tensors[1].GetTensorTypeAndShapeInfo().GetShape();
+		cache_dims_.seq_len = static_cast<int>(key_shape[2]);
+	}
+
+	auto end = std::chrono::high_resolution_clock::now();
+	double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
+
+	// Update metrics
+	metrics_.num_evaluations++;
+	double prev_avg = metrics_.avg_eval_latency_ms;
+	metrics_.avg_eval_latency_ms = (prev_avg * (metrics_.num_evaluations - 1) + elapsed_ms) / metrics_.num_evaluations;
+
+	// Update cache memory
+	size_t total_cache_elements = 0;
+	for (const auto& k : cached_keys_) {
+		total_cache_elements += k.size();
+	}
+	for (const auto& v : cached_values_) {
+		total_cache_elements += v.size();
+	}
+	metrics_.cache_memory_bytes = total_cache_elements * sizeof(float);
+	metrics_.cache_length = cache_dims_.seq_len;
+
+	return hidden_states;
 }
 
 

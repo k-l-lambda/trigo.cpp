@@ -90,7 +90,7 @@ int main(int argc, char** argv)
 	std::cout << "Cache dimensions:" << std::endl;
 	std::cout << "  Layers: " << dims.num_layers << std::endl;
 	std::cout << "  Heads: " << dims.num_heads << std::endl;
-	std::cout << "  Prefix len: " << dims.prefix_len << std::endl;
+	std::cout << "  Seq len: " << dims.seq_len << std::endl;
 	std::cout << "  Head dim: " << dims.head_dim << std::endl;
 
 	// Print KV cache values for comparison with Python
