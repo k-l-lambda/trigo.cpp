@@ -117,12 +117,30 @@ public:
 		std::cout << "Output: " << config.output_dir << std::endl;
 		std::cout << std::endl;
 
+		// Create policies ONCE before game loop (avoid reloading ONNX models per game)
+		int base_seed = config.random_seed >= 0 ? config.random_seed : -1;
+
+		auto black = PolicyFactory::create(
+			config.black_policy,
+			config.model_path,
+			base_seed,
+			config.mcts_simulations,
+			config.mcts_c_puct
+		);
+		auto white = PolicyFactory::create(
+			config.white_policy,
+			config.model_path,
+			base_seed >= 0 ? base_seed + 1 : -1,
+			config.mcts_simulations,
+			config.mcts_c_puct
+		);
+
 		start_time = std::chrono::steady_clock::now();
 
 		// Generate games
 		for (int i = 0; i < config.num_games; i++)
 		{
-			generate_one_game(i);
+			generate_one_game(i, black.get(), white.get());
 
 			if ((i + 1) % config.log_interval == 0)
 			{
@@ -137,7 +155,7 @@ private:
 	/**
 	 * Generate one self-play game
 	 */
-	void generate_one_game(int game_id)
+	void generate_one_game(int game_id, IPolicy* black, IPolicy* white)
 	{
 		// Select board shape (fixed or random)
 		BoardShape actual_shape = config.board_shape;
@@ -157,26 +175,6 @@ private:
 		TrigoGame game(actual_shape);
 		game.start_game();
 
-		// Create policies
-		int seed = config.random_seed >= 0
-		           ? config.random_seed + game_id
-		           : -1;
-
-		auto black = PolicyFactory::create(
-			config.black_policy,
-			config.model_path,
-			seed,
-			config.mcts_simulations,
-			config.mcts_c_puct
-		);
-		auto white = PolicyFactory::create(
-			config.white_policy,
-			config.model_path,
-			seed + 1,
-			config.mcts_simulations,
-			config.mcts_c_puct
-		);
-
 		// Play game
 		int move_count = 0;
 		std::cout << "\n[Game " << game_id << "] ";
@@ -187,8 +185,8 @@ private:
 			// Get current player's policy
 			Stone current_player = game.get_current_player();
 			IPolicy* current_policy = current_player == Stone::Black
-			                          ? black.get()
-			                          : white.get();
+			                          ? black
+			                          : white;
 
 			// Select action
 			PolicyAction action = current_policy->select_action(game);

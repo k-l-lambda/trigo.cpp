@@ -40,6 +40,7 @@ ENV/
 *.egg-info/
 dist/
 build/
+build_release/
 *.egg
 .pytest_cache/
 
