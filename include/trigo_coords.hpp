@@ -67,9 +67,11 @@ inline std::string encode_ab0yz(const std::vector<int>& pos, const std::vector<i
 		double center = (size - 1) / 2.0;
 		int index = pos[i];
 
-		if (index == static_cast<int>(center))
+		// Only output '0' for center if size is odd (center is integer)
+		// For even size, center is x.5, so no position equals center
+		if (size % 2 == 1 && index == static_cast<int>(center))
 		{
-			// Center position
+			// Center position (only valid for odd-sized dimensions)
 			result += '0';
 		}
 		else if (index < center)
@@ -138,7 +140,14 @@ inline std::vector<int> decode_ab0yz(const std::string& code, const std::vector<
 
 		if (ch == '0')
 		{
-			// Center position
+			// Center position - only valid for odd-sized dimensions
+			if (size % 2 == 0)
+			{
+				throw std::invalid_argument(
+					"Invalid TGN coordinate: \"" + code + "\" ('0' is not valid for even-sized dimension " +
+					std::to_string(size) + " on axis " + std::to_string(i) + ")"
+				);
+			}
 			result.push_back(static_cast<int>(center));
 		}
 		else if (ch >= 'a' && ch <= 'z')
