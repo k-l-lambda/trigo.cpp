@@ -177,7 +177,8 @@ private:
 
 		// Play game
 		int move_count = 0;
-		std::cout << "\n[Game " << game_id << "] ";
+		std::cout << "\n[Game " << game_id << "] "
+		          << actual_shape.x << "x" << actual_shape.y << "x" << actual_shape.z << ": ";
 		std::cout.flush();
 
 		while (game.is_game_active() && move_count < config.max_moves)
@@ -227,7 +228,12 @@ private:
 			move_count++;
 		}
 
-		std::cout << "\n[Game " << game_id << "] Finished after " << move_count << " moves" << std::endl;
+		// Calculate and print territory result
+		auto territory = game.get_territory();
+		int score = territory.white - territory.black;  // Positive = White wins
+
+		std::cout << "; " << move_count << " moves, score: "
+		          << (score >= 0 ? "+" : "") << score << std::endl;
 
 		// Record game
 		SelfPlayRecord record = GameRecorder::record_game(
