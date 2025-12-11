@@ -847,7 +847,9 @@ public:
 		const std::string& model_path,
 		int num_simulations = 50,
 		float c_puct = 1.0f,
-		int seed = 42
+		int seed = 42,
+		bool use_gpu = false,
+		int device_id = 0
 	)
 		: seed_(seed)
 	{
@@ -857,8 +859,8 @@ public:
 			model_path + "/base_model_eval_cached.onnx",
 			model_path + "/policy_head.onnx",
 			model_path + "/value_head.onnx",
-			false,  // CPU mode
-			0,
+			use_gpu,
+			device_id,
 			"",     // No separate evaluation model
 			model_path + "/base_model_eval_extend.onnx"  // Enable incremental cache
 		);

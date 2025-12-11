@@ -87,7 +87,7 @@ set(TRIGO_INFERENCE_SOURCES
     src/tgn_tokenizer.cpp
     src/shared_model_inferencer.cpp
     src/prefix_cache_inferencer.cpp
-    # src/prefix_tree_builder.cpp
+    src/prefix_tree_builder.cpp
 )
 
 # CUDA source files
@@ -656,6 +656,21 @@ if(USE_CUDA)
 	target_link_libraries(test_incremental_consistency PRIVATE CUDA::cudart)
 endif()
 set_target_properties(test_incremental_consistency PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test IncrementalCachedMCTSPolicy GPU vs CPU
+add_executable(test_incremental_gpu tests/test_incremental_gpu.cpp)
+target_link_libraries(test_incremental_gpu PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_incremental_gpu PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_incremental_gpu PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
