@@ -349,33 +349,40 @@ private:
 	int num_simulations;
 
 public:
-	AlphaZeroPolicy(const std::string& model_path, int num_sims = 50, int seed = 42)
+	AlphaZeroPolicy(const std::string& model_path, int num_sims = 50, int seed = 42, bool use_gpu = true, int device_id = 0)
 		: num_simulations(num_sims)
 	{
 		// Try GPU first, fallback to CPU if GPU initialization fails
-		bool use_gpu = true;
 		try
 		{
 			inferencer = std::make_shared<SharedModelInferencer>(
 				model_path + "/base_model.onnx",
 				model_path + "/policy_head.onnx",
 				model_path + "/value_head.onnx",
-				use_gpu
+				use_gpu,
+				device_id
 			);
 		}
 		catch (const std::exception& e)
 		{
-			std::cerr << "Warning: GPU initialization failed (" << e.what() << ")" << std::endl;
-			std::cerr << "Falling back to CPU" << std::endl;
+			if (use_gpu)
+			{
+				std::cerr << "Warning: GPU " << device_id << " initialization failed (" << e.what() << ")" << std::endl;
+				std::cerr << "Falling back to CPU" << std::endl;
 
-			// Retry with CPU only
-			use_gpu = false;
-			inferencer = std::make_shared<SharedModelInferencer>(
-				model_path + "/base_model.onnx",
-				model_path + "/policy_head.onnx",
-				model_path + "/value_head.onnx",
-				use_gpu
-			);
+				// Retry with CPU only
+				inferencer = std::make_shared<SharedModelInferencer>(
+					model_path + "/base_model.onnx",
+					model_path + "/policy_head.onnx",
+					model_path + "/value_head.onnx",
+					false,
+					0
+				);
+			}
+			else
+			{
+				throw;  // Re-throw if CPU mode also fails
+			}
 		}
 
 		// Create MCTS with value network
@@ -999,7 +1006,9 @@ public:
 		const std::string& model_path = "",
 		int seed = -1,
 		int mcts_simulations = 50,
-		float mcts_c_puct = 1.0f
+		float mcts_c_puct = 1.0f,
+		bool use_gpu = true,
+		int device_id = 0
 	)
 	{
 		if (seed < 0)
@@ -1040,7 +1049,7 @@ public:
 			{
 				throw std::runtime_error("AlphaZero policy requires model_path");
 			}
-			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed);
+			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id);
 		}
 		else if (type == "cached-alphazero")
 		{

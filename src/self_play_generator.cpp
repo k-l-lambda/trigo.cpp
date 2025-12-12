@@ -21,6 +21,9 @@
 #include <iomanip>
 #include <sstream>
 #include <openssl/sha.h>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 
 using namespace trigo;
@@ -69,6 +72,9 @@ struct SelfPlayConfig
 	int num_threads{1};
 	int random_seed{-1};
 
+	// GPU settings
+	int num_gpus{0};  // 0 = single-threaded (auto GPU), >0 = multi-GPU parallel
+
 	// Output settings
 	std::string output_dir{"./selfplay_data"};
 	bool save_tgn{true};
@@ -87,15 +93,15 @@ class SelfPlayGenerator
 private:
 	SelfPlayConfig config;
 	std::vector<BoardShape> board_candidates;  // Pre-generated board shape candidates
-	int games_completed;
-	int total_moves;
+	std::atomic<int> games_completed{0};
+	std::atomic<int> total_moves{0};
+	std::atomic<int> next_game_id{0};  // For multi-threaded game assignment
+	std::mutex output_mutex;  // Protect file I/O and console output
 	std::chrono::steady_clock::time_point start_time;
 
 public:
 	SelfPlayGenerator(const SelfPlayConfig& cfg)
 		: config(cfg)
-		, games_completed(0)
-		, total_moves(0)
 	{
 		// Create output directory
 		fs::create_directories(config.output_dir);
@@ -134,9 +140,35 @@ public:
 		std::cout << "Games: " << config.num_games << std::endl;
 		std::cout << "Black Policy: " << config.black_policy << std::endl;
 		std::cout << "White Policy: " << config.white_policy << std::endl;
+		if (config.num_gpus > 0)
+		{
+			std::cout << "GPUs: " << config.num_gpus << " (parallel threads)" << std::endl;
+		}
 		std::cout << "Output: " << config.output_dir << std::endl;
 		std::cout << std::endl;
 
+		start_time = std::chrono::steady_clock::now();
+
+		if (config.num_gpus > 0)
+		{
+			// Multi-GPU parallel generation
+			generate_parallel();
+		}
+		else
+		{
+			// Single-threaded generation (original behavior)
+			generate_single();
+		}
+
+		log_final_stats();
+	}
+
+private:
+	/**
+	 * Single-threaded generation (original behavior)
+	 */
+	void generate_single()
+	{
 		// Create policies ONCE before game loop (avoid reloading ONNX models per game)
 		int base_seed = config.random_seed >= 0 ? config.random_seed : -1;
 
@@ -155,8 +187,6 @@ public:
 			config.mcts_c_puct
 		);
 
-		start_time = std::chrono::steady_clock::now();
-
 		// Generate games
 		for (int i = 0; i < config.num_games; i++)
 		{
@@ -167,15 +197,103 @@ public:
 				log_progress();
 			}
 		}
-
-		log_final_stats();
 	}
 
-private:
+	/**
+	 * Multi-GPU parallel generation
+	 */
+	void generate_parallel()
+	{
+		std::vector<std::thread> threads;
+
+		for (int gpu_id = 0; gpu_id < config.num_gpus; gpu_id++)
+		{
+			threads.emplace_back([this, gpu_id]() {
+				worker_thread(gpu_id);
+			});
+		}
+
+		// Wait for all threads to complete
+		for (auto& t : threads)
+		{
+			t.join();
+		}
+	}
+
+	/**
+	 * Worker thread for multi-GPU generation
+	 */
+	void worker_thread(int gpu_id)
+	{
+		// Create policies for this GPU
+		int base_seed = config.random_seed >= 0
+		                ? config.random_seed + gpu_id * 10000
+		                : std::random_device{}();
+
+		std::unique_ptr<IPolicy> black, white;
+
+		try
+		{
+			black = PolicyFactory::create(
+				config.black_policy,
+				config.model_path,
+				base_seed,
+				config.mcts_simulations,
+				config.mcts_c_puct,
+				true,   // use_gpu
+				gpu_id  // device_id
+			);
+			white = PolicyFactory::create(
+				config.white_policy,
+				config.model_path,
+				base_seed + 1,
+				config.mcts_simulations,
+				config.mcts_c_puct,
+				true,   // use_gpu
+				gpu_id  // device_id
+			);
+		}
+		catch (const std::exception& e)
+		{
+			std::lock_guard<std::mutex> lock(output_mutex);
+			std::cerr << "Error: GPU " << gpu_id << " initialization failed: " << e.what() << std::endl;
+			return;
+		}
+
+		{
+			std::lock_guard<std::mutex> lock(output_mutex);
+			std::cout << "[GPU " << gpu_id << "] Worker started" << std::endl;
+		}
+
+		// Process games until all are done
+		while (true)
+		{
+			int game_id = next_game_id.fetch_add(1);
+			if (game_id >= config.num_games)
+			{
+				break;
+			}
+
+			generate_one_game(game_id, black.get(), white.get(), gpu_id);
+
+			int completed = games_completed.load();
+			if (completed % config.log_interval == 0 && completed > 0)
+			{
+				std::lock_guard<std::mutex> lock(output_mutex);
+				log_progress();
+			}
+		}
+
+		{
+			std::lock_guard<std::mutex> lock(output_mutex);
+			std::cout << "[GPU " << gpu_id << "] Worker finished" << std::endl;
+		}
+	}
+
 	/**
 	 * Generate one self-play game
 	 */
-	void generate_one_game(int game_id, IPolicy* black, IPolicy* white)
+	void generate_one_game(int game_id, IPolicy* black, IPolicy* white, int gpu_id = -1)
 	{
 		// Select board shape (fixed or random)
 		BoardShape actual_shape = config.board_shape;
@@ -195,11 +313,9 @@ private:
 		TrigoGame game(actual_shape);
 		game.start_game();
 
-		// Play game
+		// Play game (collect moves without printing during multi-GPU)
 		int move_count = 0;
-		std::cout << "\n[Game " << game_id << "] "
-		          << actual_shape.x << "x" << actual_shape.y << "x" << actual_shape.z << ": ";
-		std::cout.flush();
+		std::ostringstream moves_stream;
 
 		while (game.is_game_active() && move_count < config.max_moves)
 		{
@@ -223,9 +339,7 @@ private:
 				move_str = encode_ab0yz(action.position, game.get_shape());
 			}
 
-			// Print move on same line (like TypeScript version)
-			std::cout << move_str << " ";
-			std::cout.flush();
+			moves_stream << move_str << " ";
 
 			// Execute action
 			bool success;
@@ -240,6 +354,7 @@ private:
 
 			if (!success)
 			{
+				std::lock_guard<std::mutex> lock(output_mutex);
 				std::cerr << "\nWarning: Invalid action in game " << game_id
 				          << " at move " << move_count << std::endl;
 				break;
@@ -248,12 +363,25 @@ private:
 			move_count++;
 		}
 
-		// Calculate and print territory result
+		// Calculate territory result
 		auto territory = game.get_territory();
 		int score = territory.white - territory.black;  // Positive = White wins
 
-		std::cout << "; " << move_count << " moves, score: "
-		          << (score >= 0 ? "+" : "") << score << std::endl;
+		// Print game result (thread-safe)
+		{
+			std::lock_guard<std::mutex> lock(output_mutex);
+			if (gpu_id >= 0)
+			{
+				std::cout << "\n[GPU " << gpu_id << "][Game " << game_id << "] ";
+			}
+			else
+			{
+				std::cout << "\n[Game " << game_id << "] ";
+			}
+			std::cout << actual_shape.x << "x" << actual_shape.y << "x" << actual_shape.z << ": "
+			          << moves_stream.str() << "; " << move_count << " moves, score: "
+			          << (score >= 0 ? "+" : "") << score << std::endl;
+		}
 
 		// Record game
 		SelfPlayRecord record = GameRecorder::record_game(
@@ -263,7 +391,7 @@ private:
 			"Self-Play Training"
 		);
 
-		// Save to file with hash-based filename
+		// Save to file with hash-based filename (thread-safe due to unique filenames)
 		if (config.save_tgn)
 		{
 			std::string tgn_content = GameRecorder::to_tgn(record);
@@ -272,7 +400,7 @@ private:
 			GameRecorder::save_tgn(record, filename);
 		}
 
-		// Update stats
+		// Update stats (atomic)
 		games_completed++;
 		total_moves += move_count;
 	}
@@ -287,11 +415,13 @@ private:
 			now - start_time
 		).count();
 
-		float games_per_sec = games_completed / (float)std::max(elapsed, 1L);
-		float avg_moves = total_moves / (float)std::max(games_completed, 1);
+		int completed = games_completed.load();
+		int moves = total_moves.load();
+		float games_per_sec = completed / (float)std::max(elapsed, 1L);
+		float avg_moves = moves / (float)std::max(completed, 1);
 
-		std::cout << "Progress: " << games_completed << "/" << config.num_games
-		          << " games (" << (games_completed * 100 / config.num_games) << "%)"
+		std::cout << "Progress: " << completed << "/" << config.num_games
+		          << " games (" << (completed * 100 / config.num_games) << "%)"
 		          << " | " << games_per_sec << " games/sec"
 		          << " | avg " << avg_moves << " moves/game"
 		          << std::endl;
@@ -307,12 +437,15 @@ private:
 			end_time - start_time
 		).count();
 
+		int completed = games_completed.load();
+		int moves = total_moves.load();
+
 		std::cout << "\n=== Generation Complete ===" << std::endl;
-		std::cout << "Total games: " << games_completed << std::endl;
-		std::cout << "Total moves: " << total_moves << std::endl;
-		std::cout << "Average moves per game: " << (total_moves / (float)games_completed) << std::endl;
+		std::cout << "Total games: " << completed << std::endl;
+		std::cout << "Total moves: " << moves << std::endl;
+		std::cout << "Average moves per game: " << (moves / (float)completed) << std::endl;
 		std::cout << "Time elapsed: " << elapsed << " seconds" << std::endl;
-		std::cout << "Games per second: " << (games_completed / (float)std::max(elapsed, 1L)) << std::endl;
+		std::cout << "Games per second: " << (completed / (float)std::max(elapsed, 1L)) << std::endl;
 		std::cout << "Output directory: " << config.output_dir << std::endl;
 	}
 };
@@ -382,6 +515,10 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 		{
 			config.mcts_c_puct = std::stof(argv[++i]);
 		}
+		else if (arg == "--num-gpus" && i + 1 < argc)
+		{
+			config.num_gpus = std::stoi(argv[++i]);
+		}
 		else if (arg == "--help" || arg == "-h")
 		{
 			std::cout << "Usage: self_play_generator [options]\n";
@@ -401,6 +538,7 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "  --seed N               Random seed (default: random)\n";
 			std::cout << "  --mcts-simulations N   MCTS simulations per move (default: 50)\n";
 			std::cout << "  --mcts-c-puct F        MCTS exploration constant (default: 1.0)\n";
+			std::cout << "  --num-gpus N           Number of GPUs for parallel generation (default: 0 = single)\n";
 			std::cout << "  --help                 Show this help message\n";
 			std::exit(0);
 		}
