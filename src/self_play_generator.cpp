@@ -18,10 +18,30 @@
 #include <string>
 #include <filesystem>
 #include <chrono>
+#include <iomanip>
+#include <sstream>
+#include <openssl/sha.h>
 
 
 using namespace trigo;
 namespace fs = std::filesystem;
+
+
+/**
+ * Compute SHA256 hash and return first 16 hex characters
+ */
+std::string sha256_short(const std::string& data)
+{
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+	SHA256(reinterpret_cast<const unsigned char*>(data.c_str()), data.size(), hash);
+
+	std::ostringstream oss;
+	for (int i = 0; i < 8; i++)  // First 8 bytes = 16 hex chars
+	{
+		oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(hash[i]);
+	}
+	return oss.str();
+}
 
 
 /**
@@ -243,11 +263,12 @@ private:
 			"Self-Play Training"
 		);
 
-		// Save to file
+		// Save to file with hash-based filename
 		if (config.save_tgn)
 		{
-			std::string filename = config.output_dir + "/game_"
-			                       + std::to_string(game_id) + ".tgn";
+			std::string tgn_content = GameRecorder::to_tgn(record);
+			std::string hash = sha256_short(tgn_content);
+			std::string filename = config.output_dir + "/game_" + hash + ".tgn";
 			GameRecorder::save_tgn(record, filename);
 		}
 

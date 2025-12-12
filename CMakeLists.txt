@@ -4,6 +4,9 @@ project(trigo_cpp CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Find OpenSSL for SHA256 hashing
+find_package(OpenSSL REQUIRED)
+
 # Optional CUDA support
 option(USE_CUDA "Enable CUDA support" OFF)
 
@@ -208,6 +211,7 @@ target_link_libraries(self_play_generator PRIVATE
 	trigo_game
 	trigo_inference
 	${ONNXRUNTIME_LIB}
+	OpenSSL::Crypto
 )
 if(USE_CUDA)
 	target_link_libraries(self_play_generator PRIVATE CUDA::cudart)
