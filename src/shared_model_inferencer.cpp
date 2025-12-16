@@ -229,9 +229,17 @@ std::vector<float> SharedModelInferencer::value_inference(
 	int total_seq_len = seq_len + 1;
 
 	// Step 2: Split into prefix and evaluated for base model
-	// Use same split as training: prefix_len = 128
-	int prefix_len = 128;
+	// For dynamic seq length, use half of the sequence as prefix (minimum 1)
+	// This ensures eval_len is always >= 1
+	int prefix_len = std::max(1, total_seq_len / 2);
 	int eval_len = total_seq_len - prefix_len;
+
+	// Ensure eval_len is at least 1
+	if (eval_len < 1)
+	{
+		eval_len = 1;
+		prefix_len = total_seq_len - 1;
+	}
 
 	std::vector<int64_t> prefix_ids;
 	std::vector<int64_t> evaluated_ids;

@@ -461,24 +461,8 @@ private:
 		}
 #endif
 
-		// value_inference requires seq_len >= 128 (prefix_len)
-		// If sequence is too short, pad with PAD tokens (ID=0)
-		const int MIN_SEQ_LEN = 128;
-		if (seq_len < MIN_SEQ_LEN)
-		{
-			int padding_needed = MIN_SEQ_LEN - seq_len;
-			tokens.insert(tokens.end(), padding_needed, 0);  // PAD token = 0
-			seq_len = MIN_SEQ_LEN;
-
-#ifdef MCTS_ENABLE_PROFILING
-			static bool first_pad_warning = true;
-			if (first_pad_warning)
-			{
-				std::cout << "[AlphaZero MCTS] Sequence too short, padded to " << seq_len << " tokens\n";
-				first_pad_warning = false;
-			}
-#endif
-		}
+		// Note: Dynamic sequence length models don't require padding
+		// The model will handle any sequence length
 
 		// Sanity check seq_len
 		if (seq_len > 8192)
