@@ -1268,9 +1268,15 @@ private:
 			auto territory = game.get_territory();
 			if (territory.neutral == 0)
 			{
-				// All territory has been definitively claimed - game over
-				// This works correctly even if one side has been completely eliminated
-				return calculateTerminalValue(territory);
+				// Check if EITHER player has capturing moves available
+				// Game is not terminal if any captures are possible (would change territory)
+				// Optimized: single board traversal instead of checking both players separately
+				if (!game.has_any_capturing_move())
+				{
+					// No capturing moves for either player - truly terminal
+					return calculateTerminalValue(territory);
+				}
+				// Capturing moves available, so this is not a terminal state
 			}
 		}
 

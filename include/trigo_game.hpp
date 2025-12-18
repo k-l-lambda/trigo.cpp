@@ -223,6 +223,28 @@ public:
 	std::vector<Position> valid_move_positions(std::optional<Stone> player = std::nullopt) const;
 
 	/**
+	 * Check if any valid move can capture enemy stones
+	 * Used by MCTS to determine if a position is truly terminal
+	 *
+	 * Equivalent to TypeScript TrigoGame.hasCapturingMove() (commit 380aea9)
+	 *
+	 * @param player - Optional player color (defaults to current player)
+	 * @returns true if at least one valid move would capture stones
+	 */
+	bool has_capturing_move(std::optional<Stone> player = std::nullopt) const;
+
+	/**
+	 * Check if EITHER player has capturing moves available (optimized)
+	 * Uses single board traversal to check both Black and White
+	 *
+	 * Performance: O(N) instead of O(2N) with early exit when both found
+	 * Used by terminal detection to avoid checking both players separately
+	 *
+	 * @returns true if at least one player has a capturing move
+	 */
+	bool has_any_capturing_move() const;
+
+	/**
 	 * Place a stone (drop move)
 	 * Equivalent to Game.drop() and Game.appendStone() in TypeScript
 	 *

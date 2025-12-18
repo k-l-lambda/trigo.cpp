@@ -310,6 +310,7 @@ private:
 	/**
 	 * Check if natural terminal condition is met
 	 * Natural terminal: stone count >= (totalPositions - 1) / 2 AND all territory claimed (neutral == 0)
+	 *                   AND no capturing moves available for either player
 	 *
 	 * This is extracted as a separate function for clarity and potential reuse
 	 */
@@ -328,7 +329,12 @@ private:
 
 		// Check if all territory has been claimed
 		auto territory = game.get_territory();
-		return (territory.neutral == 0);
+		if (territory.neutral != 0) return false;
+
+		// Check if EITHER player has capturing moves available
+		// Game is not terminal if any captures are possible (would change territory)
+		// Optimized: single board traversal instead of checking both players separately
+		return !game.has_any_capturing_move();
 	}
 
 	/**
@@ -410,6 +416,13 @@ private:
 				if (success)
 				{
 					stone_count++;  // Increment stone count on successful drop
+
+					// Subtract captured stones from count
+					auto lastStep = game.get_last_step();
+					if (lastStep.has_value())
+					{
+						stone_count -= lastStep->capturedPositions.size();
+					}
 				}
 			}
 

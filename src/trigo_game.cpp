@@ -235,6 +235,112 @@ std::vector<Position> TrigoGame::valid_move_positions(std::optional<Stone> playe
 }
 
 
+bool TrigoGame::has_capturing_move(std::optional<Stone> player) const
+{
+	Stone playerColor = player.value_or(currentPlayer);
+
+	// Iterate through all board positions
+	for (int x = 0; x < shape.x; x++)
+	{
+		for (int y = 0; y < shape.y; y++)
+		{
+			for (int z = 0; z < shape.z; z++)
+			{
+				// Skip occupied positions
+				if (board[x][y][z] != Stone::Empty)
+				{
+					continue;
+				}
+
+				Position pos(x, y, z);
+
+				// Skip invalid moves (Ko, suicide)
+				if (is_ko_violation(pos, playerColor, board, shape, &lastCapturedPositions))
+				{
+					continue;
+				}
+
+				if (is_suicide_move(pos, playerColor, board, shape))
+				{
+					continue;
+				}
+
+				// Check if this move would capture any stones
+				auto capturedGroups = find_captured_groups(pos, playerColor, board, shape);
+				if (!capturedGroups.empty())
+				{
+					return true;  // Found a capturing move
+				}
+			}
+		}
+	}
+
+	return false;  // No capturing moves available
+}
+
+
+bool TrigoGame::has_any_capturing_move() const
+{
+	bool blackCanCapture = false;
+	bool whiteCanCapture = false;
+
+	// Single board traversal checking both players
+	for (int x = 0; x < shape.x; x++)
+	{
+		for (int y = 0; y < shape.y; y++)
+		{
+			for (int z = 0; z < shape.z; z++)
+			{
+				// Skip occupied positions
+				if (board[x][y][z] != Stone::Empty)
+				{
+					continue;
+				}
+
+				Position pos(x, y, z);
+
+				// Check Black capturing move (if not already found)
+				if (!blackCanCapture)
+				{
+					if (!is_ko_violation(pos, Stone::Black, board, shape, &lastCapturedPositions) &&
+					    !is_suicide_move(pos, Stone::Black, board, shape))
+					{
+						auto capturedGroups = find_captured_groups(pos, Stone::Black, board, shape);
+						if (!capturedGroups.empty())
+						{
+							blackCanCapture = true;
+						}
+					}
+				}
+
+				// Check White capturing move (if not already found)
+				if (!whiteCanCapture)
+				{
+					if (!is_ko_violation(pos, Stone::White, board, shape, &lastCapturedPositions) &&
+					    !is_suicide_move(pos, Stone::White, board, shape))
+					{
+						auto capturedGroups = find_captured_groups(pos, Stone::White, board, shape);
+						if (!capturedGroups.empty())
+						{
+							whiteCanCapture = true;
+						}
+					}
+				}
+
+				// Early exit if both players have capturing moves
+				if (blackCanCapture && whiteCanCapture)
+				{
+					return true;
+				}
+			}
+		}
+	}
+
+	// Return true if at least one player has capturing move
+	return (blackCanCapture || whiteCanCapture);
+}
+
+
 bool TrigoGame::drop(const Position& pos)
 {
 	// Validate the move
