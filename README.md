@@ -19,27 +19,255 @@ This project implements production-ready tools for Trigo AI development:
 
 ### Prerequisites
 
-- CMake 3.18+
-- GCC 9+ or Clang 10+
-- CUDA Toolkit 11.0+ (optional, for GPU inference)
-- ONNX Runtime 1.17.0+ (provided in repository)
+- **CMake 3.18+**
+- **GCC 9+ or Clang 10+** (C++17 support required)
+- **ONNX Runtime 1.17.0+** (see installation instructions below)
+- **CUDA Toolkit 11.0+** (optional, for GPU inference)
+
+### Installing ONNX Runtime
+
+ONNX Runtime is required for neural network inference. This project supports **ONNX Runtime 1.17.0+**.
+
+**Version Selection Guide:**
+- **H100/H200 GPUs**: Use version 1.20.0+ (required)
+- **RTX 30xx/40xx, A100 GPUs**: Use version 1.17.0 or 1.20.0
+- **Older GPUs (V100, P100)**: Use version 1.17.0
+- **CPU-only**: Use version 1.17.0 or newer
+
+**TL;DR - Quick Setup:**
+
+```bash
+cd /path/to/trigo.cpp
+
+# For H100/H200 GPUs (use ONNX Runtime 1.20.0):
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-gpu-1.20.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.20.0.tgz && rm onnxruntime-linux-x64-gpu-1.20.0.tgz
+export LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-gpu-1.20.0/lib:$LD_LIBRARY_PATH
+
+# OR for RTX 30xx/40xx/A100 GPUs (use ONNX Runtime 1.17.0):
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-gpu-1.17.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.17.0.tgz && rm onnxruntime-linux-x64-gpu-1.17.0.tgz
+export LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-gpu-1.17.0/lib:$LD_LIBRARY_PATH
+
+# Build
+mkdir build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release && make -j$(nproc)
+```
+
+**Quick Check:** The CMake configuration will automatically search for ONNX Runtime in:
+1. `trigo.cpp/onnxruntime-linux-x64-gpu-1.20.0/` (bundled GPU version - H100/H200)
+2. `trigo.cpp/onnxruntime-linux-x64-gpu-1.17.0/` (bundled GPU version - RTX/A100)
+3. `trigo.cpp/onnxruntime-linux-x64-1.17.0/` (bundled CPU version)
+4. `/opt/onnxruntime/` (system installation)
+5. `/usr/local/` (system installation)
+
+If you have ONNX Runtime pre-installed in the project directory, you can skip to the [Build](#build) section.
+
+Choose one of the following installation methods:
+
+#### Method 1: Download Pre-built Binaries (Recommended)
+
+**Option A: Install to project directory (no sudo required):**
+```bash
+# Navigate to trigo.cpp project root
+cd /path/to/trigo.cpp
+
+# Choose based on your GPU:
+
+# For H100/H200 (Hopper architecture):
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-gpu-1.20.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.20.0.tgz
+rm onnxruntime-linux-x64-gpu-1.20.0.tgz
+export LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-gpu-1.20.0/lib:$LD_LIBRARY_PATH
+
+# OR for RTX 30xx/40xx, A100 (Ampere/Ada):
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-gpu-1.17.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.17.0.tgz
+rm onnxruntime-linux-x64-gpu-1.17.0.tgz
+export LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-gpu-1.17.0/lib:$LD_LIBRARY_PATH
+
+# OR for CPU-only inference:
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-1.17.0.tgz
+tar -xzf onnxruntime-linux-x64-1.17.0.tgz
+rm onnxruntime-linux-x64-1.17.0.tgz
+export LD_LIBRARY_PATH=$PWD/onnxruntime-linux-x64-1.17.0/lib:$LD_LIBRARY_PATH
+```
+
+**Option B: Install system-wide (requires sudo):**
+```bash
+# Download ONNX Runtime (choose based on your GPU)
+cd /tmp
+
+# For H100/H200:
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-gpu-1.20.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.20.0.tgz
+sudo mv onnxruntime-linux-x64-gpu-1.20.0 /opt/onnxruntime
+
+# OR for RTX 30xx/40xx, A100:
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-gpu-1.17.0.tgz
+tar -xzf onnxruntime-linux-x64-gpu-1.17.0.tgz
+sudo mv onnxruntime-linux-x64-gpu-1.17.0 /opt/onnxruntime
+
+# Add to library path permanently
+echo 'export LD_LIBRARY_PATH=/opt/onnxruntime/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+**Version Compatibility:**
+
+| GPU Architecture | ONNX Runtime Version | CUDA Version | Notes |
+|-----------------|---------------------|--------------|-------|
+| **RTX 30xx/40xx** (Ampere/Ada) | 1.17.0+ | CUDA 11.8+ | Recommended for most users |
+| **H100/H200** (Hopper) | 1.20.0+ | CUDA 12.x | Required for Hopper architecture |
+| **A100** (Ampere) | 1.17.0+ | CUDA 11.8+ | Fully supported |
+| **V100** (Volta) | 1.17.0+ | CUDA 11.0+ | Legacy support |
+
+**Important Notes:**
+- **H100/H200 users**: MUST use ONNX Runtime 1.20.0+ with CUDA 12.x
+- **RTX 30xx/40xx users**: ONNX Runtime 1.17.0 works, but 1.20.0+ recommended
+- **Older GPUs (V100, P100)**: ONNX Runtime 1.17.0 is sufficient
+
+**Download URLs for different versions:**
+```bash
+# ONNX Runtime 1.20.0 (for H100/H200)
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.20.0/onnxruntime-linux-x64-gpu-1.20.0.tgz
+
+# ONNX Runtime 1.17.0 (for RTX 30xx/40xx, A100)
+wget https://github.com/microsoft/onnxruntime/releases/download/v1.17.0/onnxruntime-linux-x64-gpu-1.17.0.tgz
+```
+
+Check available versions at: https://github.com/microsoft/onnxruntime/releases
+
+#### Method 2: Install via Package Manager (Ubuntu/Debian)
+
+```bash
+# Add Microsoft package repository
+wget https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb
+sudo dpkg -i packages-microsoft-prod.deb
+sudo apt-get update
+
+# Install ONNX Runtime
+sudo apt-get install -y libonnxruntime
+```
+
+#### Method 3: Build from Source (Advanced)
+
+```bash
+# Clone ONNX Runtime repository
+git clone --recursive https://github.com/microsoft/onnxruntime.git
+cd onnxruntime
+
+# Build CPU version
+./build.sh --config Release --build_shared_lib --parallel
+
+# Or build GPU version with CUDA
+./build.sh --config Release --build_shared_lib --parallel --use_cuda \
+    --cuda_home /usr/local/cuda --cudnn_home /usr/lib/x86_64-linux-gnu
+
+# Install
+sudo cp build/Linux/Release/libonnxruntime.so* /usr/local/lib/
+sudo cp include/onnxruntime/core/session/*.h /usr/local/include/
+sudo ldconfig
+```
+
+#### Verify Installation
+
+```bash
+# Check if library is found
+ldconfig -p | grep onnxruntime
+
+# Expected output:
+# libonnxruntime.so.1.17.0 (libc6,x86-64) => /opt/onnxruntime/lib/libonnxruntime.so.1.17.0
+```
 
 ### Build
 
 ```bash
-# Clone repository
+# Clone repository (if not already cloned)
 cd /path/to/trigo.cpp
 
 # Create build directory
-mkdir build && cd build
+mkdir -p build && cd build
 
-# Configure and build
+# Configure with CMake
 cmake .. -DCMAKE_BUILD_TYPE=Release
+
+# If ONNX Runtime is in a custom location, specify the path:
+cmake .. -DCMAKE_BUILD_TYPE=Release \
+    -DONNXRUNTIME_ROOT=/opt/onnxruntime
+
+# Build (use all CPU cores)
 make -j$(nproc)
 
-# Run tests
+# Verify build
+ls -lh self_play_generator test_trigo_game test_alphazero_mcts
+```
+
+**Expected output:**
+```
+✓ 49 targets built successfully
+✓ Binaries created in build/:
+  - self_play_generator (main CLI tool)
+  - test_trigo_game (game engine tests)
+  - test_alphazero_mcts (MCTS tests)
+  - test_*.cpp (other unit tests)
+```
+
+### Run Tests
+
+```bash
+# Run game engine tests
 ./test_trigo_game
+
+# Run MCTS tests
 ./test_alphazero_mcts
+
+# Run all tests
+ctest --output-on-failure
+```
+
+### Common Build Issues
+
+**Issue 1: ONNX Runtime not found**
+```
+CMake Error: Could not find onnxruntime library
+```
+**Solution:**
+- Verify ONNX Runtime is installed: `ldconfig -p | grep onnxruntime`
+- Set `ONNXRUNTIME_ROOT` environment variable or CMake option
+- Check `LD_LIBRARY_PATH` includes ONNX Runtime lib directory
+
+**Issue 2: CUDA not found (GPU builds)**
+```
+CMake Error: Could not find CUDA
+```
+**Solution:**
+- Install CUDA Toolkit: `sudo apt-get install nvidia-cuda-toolkit`
+- Set `CUDA_HOME`: `export CUDA_HOME=/usr/local/cuda`
+- Verify CUDA installation: `nvcc --version`
+
+**Issue 3: Linker errors at runtime**
+```
+error while loading shared libraries: libonnxruntime.so.1.17.0: cannot open shared object file
+```
+**Solution:**
+```bash
+# Add ONNX Runtime to library path
+export LD_LIBRARY_PATH=/opt/onnxruntime/lib:$LD_LIBRARY_PATH
+# Or permanently:
+echo 'export LD_LIBRARY_PATH=/opt/onnxruntime/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+sudo ldconfig
+```
+
+**Issue 4: CMake version too old**
+```
+CMake Error: CMake 3.18 or higher is required
+```
+**Solution:**
+```bash
+# Install newer CMake from Kitware repository
+wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc | sudo apt-key add -
+sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main'
+sudo apt-get update && sudo apt-get install cmake
 ```
 
 ### Usage
