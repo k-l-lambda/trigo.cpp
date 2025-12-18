@@ -683,6 +683,30 @@ private:
 		int prefix_len = static_cast<int>(prefix_ids.size());
 		int eval_len = tree_structure.num_nodes;
 
+		// Handle edge case: all moves are single-token (common on small boards)
+		// In this case, tree_structure.num_nodes = 0, which would cause invalid tensor shape
+		if (eval_len == 0)
+		{
+			// All moves are single tokens - can't build prefix tree
+			// Fallback to uniform priors (all moves equally likely)
+			std::vector<float> probs(valid_moves.size(), 1.0f / valid_moves.size());
+
+			if (include_pass)
+			{
+				probs.push_back(pass_prior_value);
+
+				// Renormalize
+				float sum = 0.0f;
+				for (float p : probs) sum += p;
+				if (sum > 0.0f)
+				{
+					for (float& p : probs) p /= sum;
+				}
+			}
+
+			return probs;
+		}
+
 		try
 		{
 			// Get policy logits from neural network
