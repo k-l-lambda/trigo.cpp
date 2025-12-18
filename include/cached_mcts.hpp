@@ -59,6 +59,9 @@ private:
 
 	std::mt19937 rng;
 
+	// Pass move prior probability (default: 1e-10, minimal prior)
+	float pass_prior;
+
 
 public:
 	CachedMCTS(
@@ -67,7 +70,8 @@ public:
 		float exploration = 1.0f,
 		int seed = 42,
 		float dir_alpha = 0.03f,
-		float dir_epsilon = 0.25f
+		float dir_epsilon = 0.25f,
+		float pass_prob = 1e-10f  // Default minimal prior for Pass
 	)
 		: num_simulations(num_sims)
 		, c_puct(exploration)
@@ -75,6 +79,7 @@ public:
 		, dirichlet_epsilon(dir_epsilon)
 		, inferencer(inf)
 		, rng(seed)
+		, pass_prior(pass_prob)
 	{
 	}
 
@@ -352,7 +357,7 @@ private:
 		inferencer->compute_prefix_cache(current_tokens, 1, static_cast<int>(current_tokens.size()));
 
 		// Get policy priors for ALL valid moves at once
-		std::vector<float> priors = get_move_priors(game, valid_moves, can_pass);
+		std::vector<float> priors = get_move_priors(game, valid_moves, can_pass, pass_prior);
 
 #ifdef MCTS_ENABLE_PROFILING
 		// Debug: Print Pass prior if included
@@ -647,9 +652,16 @@ private:
 	std::vector<float> get_move_priors(
 		const TrigoGame& game,
 		const std::vector<Position>& unexpanded_moves,
-		bool include_pass
+		bool include_pass,
+		float pass_prior_value = 1e-10f  // Default minimal prior for Pass move
 	)
 	{
+		// Early exit optimization: if only Pass is valid, skip inference
+		if (unexpanded_moves.empty() && include_pass)
+		{
+			return {1.0f};  // 100% probability for Pass
+		}
+
 		// Build token sequences for each candidate move
 		auto board_shape = game.get_shape();
 		std::vector<std::vector<int64_t>> candidate_sequences;
@@ -674,26 +686,6 @@ private:
 			{
 				// Single token or empty - add empty sequence
 				// These will be handled specially in scoring (direct prediction from prefix)
-				candidate_sequences.push_back(std::vector<int64_t>());
-			}
-		}
-
-		// Add pass if needed
-		// Note: TGN format uses "Pass" (capital P, lowercase ass)
-		if (include_pass)
-		{
-			auto pass_tokens = tokenizer.encode("Pass", 2048, false, false, false, false);
-			move_notations.push_back("Pass");
-
-			// Always push a candidate sequence for pass to keep arrays aligned
-			if (pass_tokens.size() > 1)
-			{
-				std::vector<int64_t> seq(pass_tokens.begin(), pass_tokens.end() - 1);
-				candidate_sequences.push_back(seq);
-			}
-			else
-			{
-				// Single-token or empty: treat as single-token move (leaf_pos == -1)
 				candidate_sequences.push_back(std::vector<int64_t>());
 			}
 		}
@@ -842,6 +834,20 @@ private:
 						  << " prior=" << probs[idx] << std::endl;
 			}
 #endif
+
+			// Add Pass prior manually if requested
+			if (include_pass)
+			{
+				probs.push_back(pass_prior_value);
+
+				// Renormalize probabilities to sum to 1.0
+				float sum = 0.0f;
+				for (float p : probs) sum += p;
+				if (sum > 0.0f)
+				{
+					for (float& p : probs) p /= sum;
+				}
+			}
 
 			return probs;
 		}

@@ -349,7 +349,14 @@ private:
 	int num_simulations;
 
 public:
-	AlphaZeroPolicy(const std::string& model_path, int num_sims = 50, int seed = 42, bool use_gpu = true, int device_id = 0)
+	AlphaZeroPolicy(
+		const std::string& model_path,
+		int num_sims = 50,
+		int seed = 42,
+		bool use_gpu = true,
+		int device_id = 0,
+		float pass_prob = 1e-10f  // Default minimal prior for Pass
+	)
 		: num_simulations(num_sims)
 	{
 		// Try GPU first, fallback to CPU if GPU initialization fails
@@ -386,7 +393,15 @@ public:
 		}
 
 		// Create MCTS with value network
-		mcts_engine = std::make_unique<MCTS>(inferencer, num_sims, 1.0f, seed);
+		mcts_engine = std::make_unique<MCTS>(
+			inferencer,
+			num_sims,
+			1.0f,      // c_puct
+			seed,
+			0.03f,     // dir_alpha
+			0.25f,     // dir_epsilon
+			pass_prob  // pass_prior
+		);
 	}
 
 	PolicyAction select_action(const TrigoGame& game) override
@@ -1008,7 +1023,8 @@ public:
 		int mcts_simulations = 50,
 		float mcts_c_puct = 1.0f,
 		bool use_gpu = true,
-		int device_id = 0
+		int device_id = 0,
+		float pass_prior = 1e-10f  // Default minimal prior for Pass
 	)
 	{
 		if (seed < 0)
@@ -1049,7 +1065,7 @@ public:
 			{
 				throw std::runtime_error("AlphaZero policy requires model_path");
 			}
-			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id);
+			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id, pass_prior);
 		}
 		else if (type == "cached-alphazero")
 		{
@@ -1082,7 +1098,7 @@ public:
 			);
 
 			// Create CachedMCTS with configurable simulations and c_puct
-			auto cached_mcts = std::make_shared<CachedMCTS>(inferencer, mcts_simulations, mcts_c_puct, seed);
+			auto cached_mcts = std::make_shared<CachedMCTS>(inferencer, mcts_simulations, mcts_c_puct, seed, 0.03f, 0.25f, pass_prior);
 
 			// Wrap in IPolicy adapter
 			return std::make_unique<CachedMCTSPolicy>(cached_mcts);
