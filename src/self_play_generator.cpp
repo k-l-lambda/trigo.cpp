@@ -291,6 +291,23 @@ private:
 	}
 
 	/**
+	 * Print game header to output stream
+	 * Helper to avoid duplication between immediate and batch print modes
+	 */
+	void print_game_header(std::ostream& os, int gpu_id, int game_id, const BoardShape& shape)
+	{
+		if (gpu_id >= 0)
+		{
+			os << "\n[GPU " << gpu_id << "][Game " << game_id << "] ";
+		}
+		else
+		{
+			os << "\n[Game " << game_id << "] ";
+		}
+		os << shape.x << "x" << shape.y << "x" << shape.z << ": ";
+	}
+
+	/**
 	 * Generate one self-play game
 	 */
 	void generate_one_game(int game_id, IPolicy* black, IPolicy* white, int gpu_id = -1)
@@ -313,9 +330,59 @@ private:
 		TrigoGame game(actual_shape);
 		game.start_game();
 
-		// Play game (collect moves without printing during multi-GPU)
+		// Determine if we should do immediate printing (only in single-threaded mode)
+		bool immediate_print = (config.num_threads == 1 && config.num_gpus == 0);
+
+		// Print game header (only if immediate printing)
+		if (immediate_print)
+		{
+			std::lock_guard<std::mutex> lock(output_mutex);
+			print_game_header(std::cout, gpu_id, game_id, actual_shape);
+			// Don't flush here - let buffer accumulate and flush at end
+		}
+
+		// Play game
 		int move_count = 0;
-		std::ostringstream moves_stream;
+		std::ostringstream moves_stream;  // Collect moves for final output and TGN saving
+		bool first_move = true;  // Track first move to avoid trailing space
+
+		auto check_natural_terminal = [&game]() -> bool {
+			const auto& board = game.get_board();
+			const auto& shape = game.get_shape();
+			int totalPositions = shape.x * shape.y * shape.z;
+
+			if (totalPositions <= 0) return false;
+
+			// Count stones
+			int stoneCount = 0;
+			for (int x = 0; x < shape.x; x++)
+			{
+				for (int y = 0; y < shape.y; y++)
+				{
+					for (int z = 0; z < shape.z; z++)
+					{
+						if (board[x][y][z] != Stone::Empty)
+						{
+							stoneCount++;
+						}
+					}
+				}
+			}
+
+			// Check stone count >= (totalPositions - 1) / 2 and neutral == 0
+			// For 5x1x1: need >= 2 stones instead of > 2.5 (50%)
+			int minStones = (totalPositions - 1) / 2;
+			if (stoneCount >= minStones)
+			{
+				auto territory = game.get_territory();
+				if (territory.neutral == 0)
+				{
+					return true;  // Natural terminal condition met
+				}
+			}
+
+			return false;
+		};
 
 		while (game.is_game_active() && move_count < config.max_moves)
 		{
@@ -339,8 +406,6 @@ private:
 				move_str = encode_ab0yz(action.position, game.get_shape());
 			}
 
-			moves_stream << move_str << " ";
-
 			// Execute action
 			bool success;
 			if (action.is_pass)
@@ -360,27 +425,53 @@ private:
 				break;
 			}
 
+			// Collect move for final output (avoid trailing space)
+			if (!first_move)
+			{
+				moves_stream << ' ';
+			}
+			moves_stream << move_str;
+			first_move = false;
+
+			// Print move immediately (only in single-threaded mode)
+			// Don't flush each move - let buffer accumulate for better performance
+			if (immediate_print)
+			{
+				std::lock_guard<std::mutex> lock(output_mutex);
+				std::cout << move_str << " ";
+			}
+
 			move_count++;
+
+			// Check for natural terminal condition after each move
+			if (check_natural_terminal())
+			{
+				// Natural terminal: coverage > 50% and all territory claimed
+				break;
+			}
 		}
 
 		// Calculate territory result
 		auto territory = game.get_territory();
 		int score = territory.white - territory.black;  // Positive = White wins
 
-		// Print game result (thread-safe)
+		// Print game summary
 		{
 			std::lock_guard<std::mutex> lock(output_mutex);
-			if (gpu_id >= 0)
+			if (immediate_print)
 			{
-				std::cout << "\n[GPU " << gpu_id << "][Game " << game_id << "] ";
+				// Just print the summary (moves already printed)
+				// Flush at end to ensure all output is visible
+				std::cout << "; " << move_count << " moves, score: "
+				          << (score >= 0 ? "+" : "") << score << std::endl;
 			}
 			else
 			{
-				std::cout << "\n[Game " << game_id << "] ";
+				// Print complete game on one line (header + moves + summary)
+				print_game_header(std::cout, gpu_id, game_id, actual_shape);
+				std::cout << moves_stream.str() << "; " << move_count << " moves, score: "
+				          << (score >= 0 ? "+" : "") << score << std::endl;
 			}
-			std::cout << actual_shape.x << "x" << actual_shape.y << "x" << actual_shape.z << ": "
-			          << moves_stream.str() << "; " << move_count << " moves, score: "
-			          << (score >= 0 ? "+" : "") << score << std::endl;
 		}
 
 		// Record game
