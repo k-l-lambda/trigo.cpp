@@ -1257,11 +1257,13 @@ private:
 			}
 		}
 
-		// Performance optimization: Only check territory when board is reasonably full
-		// Territory computation (flood-fill) is expensive and unreliable on sparse boards
-		float coverageRatio = static_cast<float>(stoneCount) / totalPositions;
+		// Performance optimization: Only check territory when board has enough stones
+		// Use (totalPositions - 1) / 2 threshold instead of 50% to catch terminal states earlier
+		// For 5x1x1: need >= 2 stones instead of > 2.5
+		// Territory computation (flood-fill) is expensive and unreliable on very sparse boards
+		int minStones = (totalPositions - 1) / 2;
 
-		if (coverageRatio > 0.5f)
+		if (stoneCount >= minStones)
 		{
 			auto territory = game.get_territory();
 			if (territory.neutral == 0)
