@@ -308,6 +308,30 @@ private:
 	}
 
 	/**
+	 * Check if natural terminal condition is met
+	 * Natural terminal: stone count >= (totalPositions - 1) / 2 AND all territory claimed (neutral == 0)
+	 *
+	 * This is extracted as a separate function for clarity and potential reuse
+	 */
+	bool check_natural_terminal(TrigoGame& game, int stone_count)
+	{
+		const auto& shape = game.get_shape();
+		int totalPositions = shape.x * shape.y * shape.z;
+
+		// Safety check (should not happen with valid board shapes)
+		if (totalPositions <= 0) return false;
+
+		// Early exit if not enough stones yet
+		// For 5x1x1: need >= 2 stones instead of > 2.5 (50%)
+		int minStones = (totalPositions - 1) / 2;
+		if (stone_count < minStones) return false;
+
+		// Check if all territory has been claimed
+		auto territory = game.get_territory();
+		return (territory.neutral == 0);
+	}
+
+	/**
 	 * Generate one self-play game
 	 */
 	void generate_one_game(int game_id, IPolicy* black, IPolicy* white, int gpu_id = -1)
@@ -318,11 +342,14 @@ private:
 		if (config.random_board)
 		{
 			// Create separate RNG for board shape selection
-			int seed = config.random_seed >= 0
-			           ? config.random_seed + game_id * 1000000  // Large offset to avoid policy RNG collision
-			           : std::random_device{}() + game_id;
+			// Use 64-bit arithmetic to avoid integer overflow
+			uint64_t base_seed = (config.random_seed >= 0)
+				? static_cast<uint64_t>(config.random_seed)
+				: static_cast<uint64_t>(std::random_device{}());
 
-			std::mt19937 shape_rng(seed);
+			// Mix seed with game_id using a large prime
+			uint64_t seed = base_seed ^ (static_cast<uint64_t>(game_id) * 0x9E3779B97F4A7C15ULL);
+			std::mt19937 shape_rng(static_cast<std::mt19937::result_type>(seed));
 			actual_shape = select_random_board_shape(board_candidates, shape_rng);
 		}
 
@@ -343,46 +370,10 @@ private:
 
 		// Play game
 		int move_count = 0;
+		int stone_count = 0;  // Track stone count incrementally (optimization: avoid repeated board traversal)
+		bool had_error = false;  // Track if game ended due to invalid action
 		std::ostringstream moves_stream;  // Collect moves for final output and TGN saving
 		bool first_move = true;  // Track first move to avoid trailing space
-
-		auto check_natural_terminal = [&game]() -> bool {
-			const auto& board = game.get_board();
-			const auto& shape = game.get_shape();
-			int totalPositions = shape.x * shape.y * shape.z;
-
-			if (totalPositions <= 0) return false;
-
-			// Count stones
-			int stoneCount = 0;
-			for (int x = 0; x < shape.x; x++)
-			{
-				for (int y = 0; y < shape.y; y++)
-				{
-					for (int z = 0; z < shape.z; z++)
-					{
-						if (board[x][y][z] != Stone::Empty)
-						{
-							stoneCount++;
-						}
-					}
-				}
-			}
-
-			// Check stone count >= (totalPositions - 1) / 2 and neutral == 0
-			// For 5x1x1: need >= 2 stones instead of > 2.5 (50%)
-			int minStones = (totalPositions - 1) / 2;
-			if (stoneCount >= minStones)
-			{
-				auto territory = game.get_territory();
-				if (territory.neutral == 0)
-				{
-					return true;  // Natural terminal condition met
-				}
-			}
-
-			return false;
-		};
 
 		while (game.is_game_active() && move_count < config.max_moves)
 		{
@@ -411,17 +402,23 @@ private:
 			if (action.is_pass)
 			{
 				success = game.pass();
+				// stone_count unchanged for pass
 			}
 			else
 			{
 				success = game.drop(action.position);
+				if (success)
+				{
+					stone_count++;  // Increment stone count on successful drop
+				}
 			}
 
 			if (!success)
 			{
 				std::lock_guard<std::mutex> lock(output_mutex);
 				std::cerr << "\nWarning: Invalid action in game " << game_id
-				          << " at move " << move_count << std::endl;
+				          << " at move " << move_count << " (action: " << move_str << ")" << std::endl;
+				had_error = true;
 				break;
 			}
 
@@ -444,11 +441,21 @@ private:
 			move_count++;
 
 			// Check for natural terminal condition after each move
-			if (check_natural_terminal())
+			// Uses optimized stone_count instead of traversing board
+			if (check_natural_terminal(game, stone_count))
 			{
-				// Natural terminal: coverage > 50% and all territory claimed
+				// Natural terminal: stone count >= threshold and all territory claimed
 				break;
 			}
+		}
+
+		// Skip saving games that ended with errors (optional: can be configured)
+		// For now, we log the error but still save the partial game for analysis
+		if (had_error)
+		{
+			std::lock_guard<std::mutex> lock(output_mutex);
+			std::cerr << "[Game " << game_id << "] Ended with error after "
+			          << move_count << " moves (partial game will be saved)" << std::endl;
 		}
 
 		// Calculate territory result
