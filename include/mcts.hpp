@@ -368,6 +368,18 @@ private:
 		// Get policy priors for ALL valid moves at once
 		std::vector<float> priors = get_move_priors(game, valid_moves, can_pass, pass_prior);
 
+#ifdef _DEBUG
+		// Debug: verify priors array size
+		if (priors.size() != valid_moves.size() + (can_pass ? 1 : 0))
+		{
+			std::cerr << "[MCTS expand] ERROR: priors size mismatch!\n";
+			std::cerr << "  valid_moves.size() = " << valid_moves.size() << "\n";
+			std::cerr << "  can_pass = " << can_pass << "\n";
+			std::cerr << "  priors.size() = " << priors.size() << "\n";
+			std::cerr << "  expected = " << (valid_moves.size() + (can_pass ? 1 : 0)) << "\n";
+		}
+#endif	// _DEBUG
+
 #ifdef MCTS_ENABLE_PROFILING
 		// Debug: Print top 5 moves with priors
 		auto board_shape = game.get_shape();
@@ -827,9 +839,52 @@ private:
 		catch (const std::exception& e)
 		{
 			std::cerr << "[MCTS] Policy prior inference error: " << e.what() << "\n";
-			// Fallback to uniform priors
-			size_t num_moves = valid_moves.size() + (include_pass ? 1 : 0);
-			return std::vector<float>(num_moves, 1.0f / num_moves);
+
+			std::vector<float> probs;
+
+			if (!valid_moves.empty())
+			{
+				// Fallback: uniform prior over valid moves
+				float base = 1.0f / static_cast<float>(valid_moves.size());
+				probs.assign(valid_moves.size(), base);
+			}
+			else
+			{
+				// No valid moves: handle pass-only or terminal state
+				if (include_pass)
+				{
+					probs.push_back(1.0f);  // All probability on pass
+					return probs;
+				}
+				else
+				{
+					// No moves at all: return empty (terminal state)
+					std::cerr << "[MCTS] No valid moves and pass not allowed in fallback\n";
+					return probs;  // empty
+				}
+			}
+
+			if (include_pass)
+			{
+				float pass_prior = std::max(pass_prior_value, 0.0f);
+				probs.push_back(pass_prior);
+
+				// Renormalize
+				double sum = 0.0;
+				for (float p : probs) sum += p;
+
+				if (sum <= 0.0)
+				{
+					std::cerr << "[MCTS] Fallback prior renormalization failed (non-positive sum)\n";
+					float uniform = 1.0f / static_cast<float>(probs.size());
+					for (float& p : probs) p = uniform;
+					return probs;
+				}
+
+				for (float& p : probs) p = static_cast<float>(p / sum);
+			}
+
+			return probs;
 		}
 	}
 
@@ -918,6 +973,10 @@ private:
 	 * where η ~ Dir(α)
 	 *
 	 * This encourages exploration at the root during self-play
+	 *
+	 * NOTE: Pass move is EXCLUDED from Dirichlet noise to preserve minimal prior.
+	 *       Without this exclusion, Pass's prior can be boosted from 1e-10 to 5-10%
+	 *       by noise, causing incorrect selection on low simulations.
 	 */
 	void add_dirichlet_noise_to_root()
 	{
@@ -926,13 +985,27 @@ private:
 			return;
 		}
 
-		size_t num_actions = root->children.size();
+		// Count non-Pass actions for noise generation
+		size_t num_regular_actions = 0;
+		for (const auto& child : root->children)
+		{
+			if (!child->is_pass)
+			{
+				num_regular_actions++;
+			}
+		}
 
-		// Generate Dirichlet noise by sampling from Gamma distribution
-		std::vector<float> noise(num_actions);
+		// No regular actions to add noise to
+		if (num_regular_actions == 0)
+		{
+			return;
+		}
+
+		// Generate Dirichlet noise ONLY for non-Pass actions
+		std::vector<float> noise(num_regular_actions);
 		float noise_sum = 0.0f;
 
-		for (size_t i = 0; i < num_actions; i++)
+		for (size_t i = 0; i < num_regular_actions; i++)
 		{
 			noise[i] = sample_gamma(dirichlet_alpha);
 			noise_sum += noise[i];
@@ -944,12 +1017,19 @@ private:
 			return;  // Keep original priors
 		}
 
-		// Normalize and mix with original priors
-		for (size_t i = 0; i < num_actions; i++)
+		// Apply noise only to non-Pass children
+		size_t noise_idx = 0;
+		for (const auto& child : root->children)
 		{
-			float normalized_noise = noise[i] / noise_sum;
-			float original_prior = root->children[i]->prior_prob;
-			root->children[i]->prior_prob =
+			if (child->is_pass)
+			{
+				// Keep Pass prior unchanged (no noise applied)
+				continue;
+			}
+
+			float normalized_noise = noise[noise_idx++] / noise_sum;
+			float original_prior = child->prior_prob;
+			child->prior_prob =
 				(1.0f - dirichlet_epsilon) * original_prior +
 				dirichlet_epsilon * normalized_noise;
 		}
