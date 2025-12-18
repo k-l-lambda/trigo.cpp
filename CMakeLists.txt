@@ -28,22 +28,25 @@ else()
 endif()
 
 # ONNX Runtime configuration
-if(USE_CUDA)
-	set(ONNXRUNTIME_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-gpu-1.17.0")
-else()
-	# Try multiple locations for CPU-only ONNX Runtime
-	set(ONNXRUNTIME_SEARCH_PATHS
-		"${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-1.17.0"
-		"${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-gpu-1.17.0"
-		"/usr/local"
-		"/usr"
-	)
-	foreach(SEARCH_PATH ${ONNXRUNTIME_SEARCH_PATHS})
-		if(EXISTS "${SEARCH_PATH}/include/onnxruntime_c_api.h")
-			set(ONNXRUNTIME_ROOT_DIR "${SEARCH_PATH}")
-			break()
-		endif()
-	endforeach()
+# Allow user to override with -DONNXRUNTIME_ROOT_DIR=...
+if(NOT ONNXRUNTIME_ROOT_DIR)
+	if(USE_CUDA)
+		set(ONNXRUNTIME_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-gpu-1.17.0")
+	else()
+		# Try multiple locations for CPU-only ONNX Runtime
+		set(ONNXRUNTIME_SEARCH_PATHS
+			"${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-1.17.0"
+			"${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime-linux-x64-gpu-1.17.0"
+			"/usr/local"
+			"/usr"
+		)
+		foreach(SEARCH_PATH ${ONNXRUNTIME_SEARCH_PATHS})
+			if(EXISTS "${SEARCH_PATH}/include/onnxruntime_c_api.h")
+				set(ONNXRUNTIME_ROOT_DIR "${SEARCH_PATH}")
+				break()
+			endif()
+		endforeach()
+	endif()
 endif()
 
 if(NOT ONNXRUNTIME_ROOT_DIR)
