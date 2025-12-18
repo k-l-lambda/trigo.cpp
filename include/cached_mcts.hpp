@@ -1207,9 +1207,14 @@ private:
 	/**
 	 * Check if game state is terminal and return ground-truth value if so
 	 *
-	 * Matches TypeScript mctsAgent.checkTerminal() behavior:
-	 * 1. Check if game is already finished (double-pass, resignation)
-	 * 2. Check for "natural" game end (coverage > 50% && neutral == 0)
+	 * Terminal conditions:
+	 * 1. Game already finished (double-pass, resignation)
+	 * 2. Natural game end: Board sufficiently occupied (>50%) AND all positions
+	 *    have definite ownership (neutral == 0)
+	 *
+	 * Note: The 50% coverage threshold is a performance heuristic to avoid
+	 * expensive territory computation early in the game. Territory calculation
+	 * is most reliable when the board is reasonably filled.
 	 *
 	 * @param game Game state to check
 	 * @return Terminal value (white-positive) if terminal, nullopt otherwise
@@ -1228,10 +1233,14 @@ private:
 		const auto& shape = game.get_shape();
 		int totalPositions = shape.x * shape.y * shape.z;
 
-		// Count stones (cheap)
+		// Safety check for degenerate board
+		if (totalPositions <= 0)
+		{
+			return std::nullopt;
+		}
+
+		// Count stones on board
 		int stoneCount = 0;
-		bool hasBlack = false;
-		bool hasWhite = false;
 
 		for (int x = 0; x < shape.x; x++)
 		{
@@ -1240,29 +1249,25 @@ private:
 				for (int z = 0; z < shape.z; z++)
 				{
 					Stone stone = board[x][y][z];
-					if (stone == Stone::Black)
+					if (stone != Stone::Empty)
 					{
-						hasBlack = true;
-						stoneCount++;
-					}
-					else if (stone == Stone::White)
-					{
-						hasWhite = true;
 						stoneCount++;
 					}
 				}
 			}
 		}
 
+		// Performance optimization: Only check territory when board is reasonably full
+		// Territory computation (flood-fill) is expensive and unreliable on sparse boards
 		float coverageRatio = static_cast<float>(stoneCount) / totalPositions;
 
-		// Only check territory if board is reasonably full
-		// (optimization: neutral == 0 is unlikely with sparse board)
-		if (hasBlack && hasWhite && coverageRatio > 0.5f)
+		if (coverageRatio > 0.5f)
 		{
 			auto territory = game.get_territory();
 			if (territory.neutral == 0)
 			{
+				// All territory has been definitively claimed - game over
+				// This works correctly even if one side has been completely eliminated
 				return calculateTerminalValue(territory);
 			}
 		}
