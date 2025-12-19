@@ -416,27 +416,42 @@ private:
 		// If already expanded, select a child to traverse
 		if (!node->children.empty())
 		{
-			// Find unexpanded child or select best by PUCT
+			// Collect unexpanded children with their priors
+			std::vector<MCTSNode*> unexpanded;
+			std::vector<float> unexpanded_priors;
+
 			for (const auto& child : node->children)
 			{
 				if (child->visit_count == 0)
 				{
-					// Apply move to game
-					if (child->is_pass)
-					{
-						game.pass();
-					}
-					else
-					{
-						game.drop(child->move);
-					}
-					return child.get();
+					unexpanded.push_back(child.get());
+					unexpanded_priors.push_back(child->prior_prob);
 				}
 			}
 
-			// All children have been visited at least once
-			node->is_fully_expanded = true;
-			return node;
+			if (unexpanded.empty())
+			{
+				// All children have been visited at least once
+				node->is_fully_expanded = true;
+				return node;
+			}
+
+			// Sample from unexpanded children weighted by prior
+			// This prevents low-prior moves (like Pass) from being forced to explore
+			std::discrete_distribution<size_t> dist(unexpanded_priors.begin(), unexpanded_priors.end());
+			size_t idx = dist(rng);
+			MCTSNode* selected = unexpanded[idx];
+
+			// Apply move to game
+			if (selected->is_pass)
+			{
+				game.pass();
+			}
+			else
+			{
+				game.drop(selected->move);
+			}
+			return selected;
 		}
 
 		// Get all valid moves
@@ -988,13 +1003,30 @@ private:
 
 		bool is_white = (current_player == Stone::White);
 
+		// Minimum visit threshold for Pass Q-value to be trusted
+		// Pass with very low prior can get artificially high Q from single lucky visit
+		// Require minimum visits before Q-value dominates PUCT selection
+		constexpr int PASS_MIN_VISITS_FOR_Q = 5;
+
 		for (const auto& child : node->children)
 		{
 			float q = child->q_value();
 			float u = c_puct * child->prior_prob * std::sqrt(node->visit_count) / (1.0f + child->visit_count);
 
-			// White maximizes Q, Black maximizes -Q
-			float score = (is_white ? q : -q) + u;
+			float score;
+
+			// Special handling for Pass node at root: don't trust Q until enough visits
+			if (child->is_pass && node == root.get() && child->visit_count < PASS_MIN_VISITS_FOR_Q)
+			{
+				// Use exploration-only PUCT score (Q treated as 0)
+				// This prevents single lucky visit from dominating selection
+				score = u;
+			}
+			else
+			{
+				// White maximizes Q, Black maximizes -Q
+				score = (is_white ? q : -q) + u;
+			}
 
 			if (score > best_score)
 			{
