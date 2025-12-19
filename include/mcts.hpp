@@ -103,6 +103,11 @@ public:
 	 * UCB1 score for action selection
 	 *
 	 * UCB1 = Q(s,a) + c * sqrt(ln(N(s)) / N(s,a))
+	 *
+	 * NOTE: This method is NOT used in the main MCTS flow.
+	 * It assumes Q is white-positive and does NOT handle player perspective.
+	 * For white-positive MCTS, use select_best_puct_child() which applies
+	 * player perspective adjustment: (is_white ? q : -q) + u
 	 */
 	float ucb1_score(float exploration_constant) const
 	{
@@ -120,6 +125,11 @@ public:
 	 * PUCT score for AlphaZero-style MCTS
 	 *
 	 * PUCT = Q(s,a) + c * P(s,a) * sqrt(N(s)) / (1 + N(s,a))
+	 *
+	 * NOTE: This method is NOT used in the main MCTS flow.
+	 * It assumes Q is white-positive and does NOT handle player perspective.
+	 * For white-positive MCTS, use select_best_puct_child() which applies
+	 * player perspective adjustment: (is_white ? q : -q) + u
 	 */
 	float puct_score(float c_puct) const
 	{
@@ -248,12 +258,6 @@ public:
 			// 3. Evaluation: Use value network (replaces rollout)
 			float value = evaluate(game_copy);
 
-			// CRITICAL: evaluate() returns value from current player's perspective
-			// But node's Q-value should be from the parent's perspective
-			// (i.e., the player who chose this move)
-			// So we need to negate before backpropagation starts
-			value = -value;
-
 #ifdef MCTS_ENABLE_PROFILING
 			auto evaluate_time = std::chrono::duration_cast<std::chrono::microseconds>(
 				std::chrono::steady_clock::now() - sim_start
@@ -381,7 +385,7 @@ private:
 			}
 
 			// Otherwise, select best child by PUCT
-			node = select_best_puct_child(node);
+			node = select_best_puct_child(node, game.get_current_player());
 
 			// Apply move to game
 			if (node->is_pass)
@@ -530,7 +534,8 @@ private:
 	 *
 	 * Replaces expensive random rollouts with fast neural network inference
 	 *
-	 * @return Value from perspective of current player in game
+	 * @return White-positive value (positive = White winning, negative = Black winning)
+	 *         Consistent with CachedMCTS value system
 	 */
 	float evaluate(TrigoGame& game)
 	{
@@ -576,14 +581,8 @@ private:
 			float value = values[0];
 
 			// IMPORTANT: Value model outputs White advantage (positive = White winning)
-			// But MCTS needs value from current player's perspective
-			// If current player is Black, we need to negate the value
-			Stone current_player = game.get_current_player();
-			if (current_player == Stone::Black)
-			{
-				value = -value;
-			}
-
+			// We return this directly without conversion (white-positive system)
+			// PUCT selection will handle player perspective adjustment
 			return value;
 		}
 		catch (const std::exception& e)
@@ -596,6 +595,9 @@ private:
 
 	/**
 	 * Backpropagation phase: Update statistics up the tree
+	 *
+	 * White-positive system: Q-values are always White advantage throughout the tree.
+	 * Player perspective is handled during PUCT selection, not during backpropagation.
 	 */
 	void backpropagate(MCTSNode* node, float value)
 	{
@@ -604,8 +606,9 @@ private:
 			node->visit_count++;
 			node->total_value += value;
 
-			// Flip value for opponent
-			value = -value;
+			// White-positive system: NO sign flipping
+			// All Q-values represent White advantage
+			// Player perspective handled in select_best_puct_child()
 
 			node = node->parent;
 		}
@@ -970,14 +973,28 @@ private:
 	}
 
 
-	MCTSNode* select_best_puct_child(MCTSNode* node)
+	/**
+	 * Select best child by PUCT score
+	 *
+	 * White-positive system: Q-values are always White advantage.
+	 * We adjust by player perspective during selection:
+	 * - White maximizes Q (higher Q = better for White)
+	 * - Black maximizes -Q (lower Q = better for Black)
+	 */
+	MCTSNode* select_best_puct_child(MCTSNode* node, Stone current_player)
 	{
 		MCTSNode* best = nullptr;
 		float best_score = -std::numeric_limits<float>::infinity();
 
+		bool is_white = (current_player == Stone::White);
+
 		for (const auto& child : node->children)
 		{
-			float score = child->puct_score(c_puct);
+			float q = child->q_value();
+			float u = c_puct * child->prior_prob * std::sqrt(node->visit_count) / (1.0f + child->visit_count);
+
+			// White maximizes Q, Black maximizes -Q
+			float score = (is_white ? q : -q) + u;
 
 			if (score > best_score)
 			{
