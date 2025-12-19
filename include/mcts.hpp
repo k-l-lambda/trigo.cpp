@@ -248,6 +248,12 @@ public:
 			// 3. Evaluation: Use value network (replaces rollout)
 			float value = evaluate(game_copy);
 
+			// CRITICAL: evaluate() returns value from current player's perspective
+			// But node's Q-value should be from the parent's perspective
+			// (i.e., the player who chose this move)
+			// So we need to negate before backpropagation starts
+			value = -value;
+
 #ifdef MCTS_ENABLE_PROFILING
 			auto evaluate_time = std::chrono::duration_cast<std::chrono::microseconds>(
 				std::chrono::steady_clock::now() - sim_start
@@ -282,6 +288,81 @@ public:
 
 		// Select best move by visit count (most robust)
 		return select_best_child();
+	}
+
+
+	/**
+	 * Print root children statistics for debugging
+	 */
+	void print_root_statistics(const TrigoGame& game) const
+	{
+		if (!root || root->children.empty())
+		{
+			std::cout << "[MCTS] No root children to display\n";
+			return;
+		}
+
+		auto board_shape = game.get_shape();
+
+		// Sort children by visit count (descending)
+		std::vector<MCTSNode*> sorted_children;
+		for (const auto& child : root->children)
+		{
+			sorted_children.push_back(child.get());
+		}
+		std::sort(sorted_children.begin(), sorted_children.end(),
+			[](MCTSNode* a, MCTSNode* b) { return a->visit_count > b->visit_count; });
+
+		std::cout << "\n[MCTS] Root children statistics (sorted by visits):\n";
+		std::cout << std::setw(10) << "Move"
+		          << std::setw(10) << "Visits"
+		          << std::setw(12) << "Prior"
+		          << std::setw(12) << "Q-value"
+		          << "\n";
+		std::cout << std::string(44, '-') << "\n";
+
+		for (size_t i = 0; i < std::min(size_t(20), sorted_children.size()); i++)
+		{
+			MCTSNode* child = sorted_children[i];
+			std::string move_str;
+			if (child->is_pass)
+			{
+				move_str = "Pass";
+			}
+			else
+			{
+				move_str = encode_ab0yz({child->move.x, child->move.y, child->move.z}, board_shape);
+			}
+
+			std::cout << std::setw(10) << move_str
+			          << std::setw(10) << child->visit_count
+			          << std::setw(12) << std::fixed << std::setprecision(6) << child->prior_prob
+			          << std::setw(12) << std::fixed << std::setprecision(6) << child->q_value()
+			          << "\n";
+		}
+
+		// Show Pass stats if not in top 20
+		bool pass_shown = false;
+		for (size_t i = 0; i < std::min(size_t(20), sorted_children.size()); i++)
+		{
+			if (sorted_children[i]->is_pass) pass_shown = true;
+		}
+		if (!pass_shown)
+		{
+			for (const auto& child : root->children)
+			{
+				if (child->is_pass)
+				{
+					std::cout << "...\n";
+					std::cout << std::setw(10) << "Pass"
+					          << std::setw(10) << child->visit_count
+					          << std::setw(12) << std::fixed << std::setprecision(6) << child->prior_prob
+					          << std::setw(12) << std::fixed << std::setprecision(6) << child->q_value()
+					          << "\n";
+					break;
+				}
+			}
+		}
 	}
 
 

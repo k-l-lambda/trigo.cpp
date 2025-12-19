@@ -698,3 +698,33 @@ set_target_properties(test_mcts_from_prefix PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Test AlphaZero MCTS from prefix sequence (uses SharedModelInferencer like self_play_generator)
+add_executable(test_alphazero_from_prefix tests/test_alphazero_from_prefix.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_alphazero_from_prefix PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_alphazero_from_prefix PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_alphazero_from_prefix PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
+# Test value network at specific positions
+add_executable(test_value_at_position tests/test_value_at_position.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_value_at_position PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_value_at_position PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_value_at_position PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
