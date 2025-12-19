@@ -404,6 +404,15 @@ private:
 		int board_size = actual_shape.x * actual_shape.y * actual_shape.z;
 		int game_max_moves = (config.max_moves > 0) ? std::min(config.max_moves, board_size * 2) : board_size * 2;
 
+		// DEBUG: Print max moves calculation
+		if (immediate_print)
+		{
+			std::lock_guard<std::mutex> lock(output_mutex);
+			std::cout << "[DEBUG] Board size: " << board_size
+			          << ", config.max_moves: " << config.max_moves
+			          << ", game_max_moves: " << game_max_moves << "\n";
+		}
+
 		while (game.is_game_active() && move_count < game_max_moves)
 		{
 			// Get current player's policy

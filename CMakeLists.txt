@@ -260,6 +260,21 @@ set_target_properties(test_mcts_simple PROPERTIES
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
 
+# Terminal Propagation Unit Tests (no ONNX dependency)
+add_executable(test_terminal_propagation tests/test_terminal_propagation.cpp)
+target_link_libraries(test_terminal_propagation PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_terminal_propagation PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_terminal_propagation PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
 # AlphaZero MCTS test
 add_executable(test_alphazero_mcts tests/test_alphazero_mcts.cpp src/prefix_tree_builder.cpp)
 target_link_libraries(test_alphazero_mcts PRIVATE

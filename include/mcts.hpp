@@ -23,6 +23,7 @@
 #include <cmath>
 #include <limits>
 #include <random>
+#include <cassert>
 #include <chrono>
 #include <iostream>
 #include <algorithm>
@@ -74,8 +75,14 @@ public:
 
 	bool is_fully_expanded;  // Whether all children have been created
 
+	// Terminal propagation optimization
+	float terminal_value;    // Cached terminal value (NaN if not terminal)
+	int depth;               // Distance from root (0 for root)
+	Stone player_to_move;    // Player to move at this node (BLACK/WHITE)
 
-	MCTSNode(const Position& m, bool pass, MCTSNode* p = nullptr, float prior = 1.0f)
+
+	MCTSNode(const Position& m, bool pass, MCTSNode* p = nullptr, float prior = 1.0f,
+	         int d = 0, Stone player = Stone::Empty)
 		: move(m)
 		, is_pass(pass)
 		, parent(p)
@@ -83,7 +90,22 @@ public:
 		, total_value(0.0f)
 		, prior_prob(prior)
 		, is_fully_expanded(false)
+		, terminal_value(std::numeric_limits<float>::quiet_NaN())
+		, depth(d)
+		, player_to_move(player)
 	{
+		// Ensure player_to_move is explicitly set (not Empty)
+		// This is critical for correct minimax propagation
+		assert(player != Stone::Empty && "player_to_move must be BLACK or WHITE");
+	}
+
+
+	/**
+	 * Check if this node is terminal (game ended at this state)
+	 */
+	bool is_terminal() const
+	{
+		return !std::isnan(terminal_value);
 	}
 
 
@@ -203,8 +225,25 @@ public:
 	PolicyAction search(const TrigoGame& game)
 	{
 		// Create root node
-		root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false);
+		Stone root_player = game.get_current_player();
+		root = std::make_unique<MCTSNode>(Position{0, 0, 0}, false, nullptr, 1.0f, 0, root_player);
 		root->visit_count = 1;  // Root is always visited
+
+		// Check if root is already terminal (game over at start)
+		if (!game.is_game_active())
+		{
+			TrigoGame game_copy = game;  // Create copy for evaluation
+			float terminal_value = evaluate(game_copy);
+			root->terminal_value = terminal_value;
+			root->is_fully_expanded = true;
+
+			#ifdef MCTS_ENABLE_PROFILING
+			std::cout << "[AlphaZero MCTS] Root is terminal: value=" << terminal_value << "\n";
+			#endif
+
+			// Return Pass as the only valid move for a finished game
+			return PolicyAction::Pass(1.0f);
+		}
 
 		bool dirichlet_applied = false;  // Track if Dirichlet noise has been added
 
@@ -263,6 +302,13 @@ public:
 
 			// 3. Evaluation: Use value network (replaces rollout)
 			float value = evaluate(game_copy);
+
+			// Mark node as terminal if game is finished
+			if (!game_copy.is_game_active() && !node->is_terminal())
+			{
+				node->terminal_value = value;
+				node->is_fully_expanded = true;  // No children to expand
+			}
 
 #ifdef MCTS_ENABLE_PROFILING
 			auto evaluate_time = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -384,6 +430,12 @@ private:
 	{
 		while (game.is_game_active())
 		{
+			// Terminal propagation: Stop at terminal nodes
+			if (node->is_terminal())
+			{
+				return node;  // Use cached terminal value
+			}
+
 			// If not fully expanded, return this node for expansion
 			if (!node->is_fully_expanded)
 			{
@@ -524,9 +576,17 @@ private:
 #endif
 
 		// Create ALL child nodes with their priors
+		// Calculate child parameters for terminal propagation
+		int child_depth = node->depth + 1;
+		Stone next_player = (node->player_to_move == Stone::Black)
+		                    ? Stone::White
+		                    : Stone::Black;
+
 		for (size_t i = 0; i < valid_moves.size(); i++)
 		{
-			auto new_node = std::make_unique<MCTSNode>(valid_moves[i], false, node, priors[i]);
+			auto new_node = std::make_unique<MCTSNode>(
+				valid_moves[i], false, node, priors[i], child_depth, next_player
+			);
 			node->children.push_back(std::move(new_node));
 		}
 
@@ -534,7 +594,9 @@ private:
 		if (can_pass)
 		{
 			float pass_prior = priors.back();
-			auto pass_node = std::make_unique<MCTSNode>(Position{0, 0, 0}, true, node, pass_prior);
+			auto pass_node = std::make_unique<MCTSNode>(
+				Position{0, 0, 0}, true, node, pass_prior, child_depth, next_player
+			);
 			node->children.push_back(std::move(pass_node));
 		}
 
@@ -640,17 +702,69 @@ private:
 	 *
 	 * White-positive system: Q-values are always White advantage throughout the tree.
 	 * Player perspective is handled during PUCT selection, not during backpropagation.
+	 *
+	 * Terminal propagation: When all children are terminal, mark parent as terminal
+	 * with minimax value (White maximizes, Black minimizes).
 	 */
 	void backpropagate(MCTSNode* node, float value)
 	{
 		while (node != nullptr)
 		{
+			// Update statistics
 			node->visit_count++;
 			node->total_value += value;
 
 			// White-positive system: NO sign flipping
 			// All Q-values represent White advantage
 			// Player perspective handled in select_best_puct_child()
+
+			// ========== Terminal State Propagation ==========
+			// Check if this node should be marked as terminal
+			// Condition: node is fully expanded AND all children are terminal AND node itself not yet marked
+			if (!node->is_terminal() && node->is_fully_expanded && !node->children.empty())
+			{
+				// Single-pass algorithm: check if all children are terminal while computing minimax
+				bool all_children_terminal = true;
+				float best_value = (node->player_to_move == Stone::White)
+				                   ? -std::numeric_limits<float>::infinity()  // White maximizes
+				                   :  std::numeric_limits<float>::infinity(); // Black minimizes
+
+				for (const auto& child : node->children)
+				{
+					if (!child->is_terminal())
+					{
+						all_children_terminal = false;
+						break;
+					}
+
+					// Update best value based on player perspective
+					if (node->player_to_move == Stone::White)
+					{
+						// White maximizes (white-positive)
+						best_value = std::max(best_value, child->terminal_value);
+					}
+					else
+					{
+						// Black minimizes (white-positive)
+						best_value = std::min(best_value, child->terminal_value);
+					}
+				}
+
+				// If all children are terminal, mark current node as terminal with minimax value
+				if (all_children_terminal)
+				{
+					node->terminal_value = best_value;
+
+					#ifdef DEBUG_TERMINAL_PROPAGATION
+					const char* player_name = (node->player_to_move == Stone::White) ? "White" : "Black";
+					std::cout << "[Terminal Propagation] Node at depth " << node->depth
+					          << " (" << player_name << ") marked terminal: "
+					          << "value=" << std::fixed << std::setprecision(4) << node->terminal_value
+					          << ", num_children=" << node->children.size() << std::endl;
+					#endif
+				}
+			}
+			// ================================================
 
 			node = node->parent;
 		}
