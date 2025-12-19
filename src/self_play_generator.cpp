@@ -671,7 +671,12 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "  --seed N               Random seed (default: random)\n";
 			std::cout << "  --mcts-simulations N   MCTS simulations per move (default: 50)\n";
 			std::cout << "  --mcts-c-puct F        MCTS exploration constant (default: 1.0)\n";
-			std::cout << "  --pass-value-bias F    Pass value bias (default: 0, use -10 to penalize Pass)\n";
+			std::cout << "  --pass-value-bias F    Pass value bias (default: 0; use negative to penalize Pass)\n";
+			std::cout << "                         Recommended values:\n";
+			std::cout << "                           -50: Strong penalty (prevents early Pass)\n";
+			std::cout << "                           -10: Moderate penalty (default for alphazero)\n";
+			std::cout << "                            -1: Light penalty (allows late-game Pass)\n";
+			std::cout << "                             0: No penalty (may cause early Pass bug)\n";
 			std::cout << "  --num-gpus N           Number of GPUs for parallel generation (default: 0 = single)\n";
 			std::cout << "  --help                 Show this help message\n";
 			std::exit(0);
