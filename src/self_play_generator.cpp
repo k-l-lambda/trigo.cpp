@@ -56,7 +56,7 @@ struct SelfPlayConfig
 	BoardShape board_shape{5, 5, 5};
 	bool random_board{false};  // Enable random board selection
 	std::string board_ranges{"2-13x1-13x1-1,2-5x2-5x2-5"};  // Default ranges (220 candidates)
-	int max_moves{500};
+	int max_moves{0};  // 0 = use board_size * 2, >0 = explicit limit
 
 	// Policy settings
 	std::string black_policy{"random"};
@@ -381,7 +381,12 @@ private:
 		std::ostringstream moves_stream;  // Collect moves for final output and TGN saving
 		bool first_move = true;  // Track first move to avoid trailing space
 
-		while (game.is_game_active() && move_count < config.max_moves)
+		// Calculate max moves based on board size (board_size * 2)
+		// This allows enough moves for complex games while preventing infinite loops
+		int board_size = actual_shape.x * actual_shape.y * actual_shape.z;
+		int game_max_moves = (config.max_moves > 0) ? std::min(config.max_moves, board_size * 2) : board_size * 2;
+
+		while (game.is_game_active() && move_count < game_max_moves)
 		{
 			// Get current player's policy
 			Stone current_player = game.get_current_player();
@@ -645,7 +650,7 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "  --white-policy P       White player policy (random/mcts/alphazero/cached-mcts)\n";
 			std::cout << "  --model PATH           Path to ONNX model for neural policy\n";
 			std::cout << "  --output DIR           Output directory (default: ./selfplay_data)\n";
-			std::cout << "  --max-moves N          Max moves per game (default: 500)\n";
+			std::cout << "  --max-moves N          Max moves per game (default: board_size * 2)\n";
 			std::cout << "  --seed N               Random seed (default: random)\n";
 			std::cout << "  --mcts-simulations N   MCTS simulations per move (default: 50)\n";
 			std::cout << "  --mcts-c-puct F        MCTS exploration constant (default: 1.0)\n";
