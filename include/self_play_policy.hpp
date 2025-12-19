@@ -355,7 +355,8 @@ public:
 		int seed = 42,
 		bool use_gpu = true,
 		int device_id = 0,
-		float pass_prob = 1e-10f  // Default minimal prior for Pass
+		float pass_prob = 1e-10f,  // Default minimal prior for Pass
+		float pass_bias = 0.0f    // Pass value bias
 	)
 		: num_simulations(num_sims)
 	{
@@ -400,7 +401,8 @@ public:
 			seed,
 			0.03f,     // dir_alpha
 			0.25f,     // dir_epsilon
-			pass_prob  // pass_prior
+			pass_prob, // pass_prior
+			pass_bias  // pass_value_bias
 		);
 	}
 
@@ -1024,7 +1026,8 @@ public:
 		float mcts_c_puct = 1.0f,
 		bool use_gpu = true,
 		int device_id = 0,
-		float pass_prior = 1e-10f  // Default minimal prior for Pass
+		float pass_prior = 1e-10f,  // Default minimal prior for Pass
+		float pass_value_bias = 0.0f  // Pass value bias
 	)
 	{
 		if (seed < 0)
@@ -1065,7 +1068,7 @@ public:
 			{
 				throw std::runtime_error("AlphaZero policy requires model_path");
 			}
-			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id, pass_prior);
+			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id, pass_prior, pass_value_bias);
 		}
 		else if (type == "cached-alphazero")
 		{

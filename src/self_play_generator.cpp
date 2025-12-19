@@ -66,6 +66,7 @@ struct SelfPlayConfig
 	// MCTS settings
 	int mcts_simulations{50};
 	float mcts_c_puct{1.0f};
+	float pass_value_bias{0.0f};  // Pass value bias for MCTS selection
 
 	// Generation settings
 	int num_games{100};
@@ -177,14 +178,22 @@ private:
 			config.model_path,
 			base_seed,
 			config.mcts_simulations,
-			config.mcts_c_puct
+			config.mcts_c_puct,
+			true,   // use_gpu
+			0,      // device_id
+			1e-10f, // pass_prior
+			config.pass_value_bias
 		);
 		auto white = PolicyFactory::create(
 			config.white_policy,
 			config.model_path,
 			base_seed >= 0 ? base_seed + 1 : -1,
 			config.mcts_simulations,
-			config.mcts_c_puct
+			config.mcts_c_puct,
+			true,   // use_gpu
+			0,      // device_id
+			1e-10f, // pass_prior
+			config.pass_value_bias
 		);
 
 		// Generate games
@@ -241,7 +250,9 @@ private:
 				config.mcts_simulations,
 				config.mcts_c_puct,
 				true,   // use_gpu
-				gpu_id  // device_id
+				gpu_id, // device_id
+				1e-10f, // pass_prior
+				config.pass_value_bias
 			);
 			white = PolicyFactory::create(
 				config.white_policy,
@@ -250,7 +261,9 @@ private:
 				config.mcts_simulations,
 				config.mcts_c_puct,
 				true,   // use_gpu
-				gpu_id  // device_id
+				gpu_id, // device_id
+				1e-10f, // pass_prior
+				config.pass_value_bias
 			);
 		}
 		catch (const std::exception& e)
@@ -631,6 +644,10 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 		{
 			config.mcts_c_puct = std::stof(argv[++i]);
 		}
+		else if (arg == "--pass-value-bias" && i + 1 < argc)
+		{
+			config.pass_value_bias = std::stof(argv[++i]);
+		}
 		else if (arg == "--num-gpus" && i + 1 < argc)
 		{
 			config.num_gpus = std::stoi(argv[++i]);
@@ -654,6 +671,7 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "  --seed N               Random seed (default: random)\n";
 			std::cout << "  --mcts-simulations N   MCTS simulations per move (default: 50)\n";
 			std::cout << "  --mcts-c-puct F        MCTS exploration constant (default: 1.0)\n";
+			std::cout << "  --pass-value-bias F    Pass value bias (default: 0, use -10 to penalize Pass)\n";
 			std::cout << "  --num-gpus N           Number of GPUs for parallel generation (default: 0 = single)\n";
 			std::cout << "  --help                 Show this help message\n";
 			std::exit(0);

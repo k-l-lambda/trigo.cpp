@@ -166,6 +166,10 @@ private:
 	// Pass move prior probability (default: 1e-10, minimal prior)
 	float pass_prior;
 
+	// Pass value bias: added to Pass move's score in PUCT selection
+	// Use negative value (e.g., -10) to penalize Pass for both players
+	float pass_value_bias;
+
 
 public:
 	MCTS(
@@ -175,7 +179,8 @@ public:
 		int seed = 42,
 		float dir_alpha = 0.03f,
 		float dir_epsilon = 0.25f,
-		float pass_prob = 1e-10f  // Default minimal prior for Pass
+		float pass_prob = 1e-10f,  // Default minimal prior for Pass
+		float pass_bias = 0.0f    // Pass value bias (0 = no bias)
 	)
 		: num_simulations(num_sims)
 		, c_puct(exploration)
@@ -184,6 +189,7 @@ public:
 		, inferencer(inf)
 		, rng(seed)
 		, pass_prior(pass_prob)
+		, pass_value_bias(pass_bias)
 	{
 	}
 
@@ -1025,13 +1031,11 @@ private:
 
 			float score;
 
-			// Special handling for Pass node: use very negative score
-			// Pass should only be selected when ALL other moves are even worse
-			// Use -infinity + u so Pass is always last choice unless no alternatives
+			// Special handling for Pass node: apply pass_value_bias
+			// Bias is added directly to the score (use negative to penalize Pass)
 			if (child->is_pass)
 			{
-				// Massive penalty to ensure Pass is never preferred over regular moves
-				score = -1000.0f + u;
+				score = (is_white ? q : -q) + pass_value_bias + u;
 			}
 			else
 			{
