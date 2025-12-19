@@ -356,7 +356,8 @@ public:
 		bool use_gpu = true,
 		int device_id = 0,
 		float pass_prob = 1e-10f,  // Default minimal prior for Pass
-		float pass_bias = 0.0f    // Pass value bias
+		float pass_bias = 0.0f,   // Pass value bias
+		float dir_epsilon = 0.25f // Dirichlet noise weight (0 = no noise)
 	)
 		: num_simulations(num_sims)
 	{
@@ -397,12 +398,12 @@ public:
 		mcts_engine = std::make_unique<MCTS>(
 			inferencer,
 			num_sims,
-			1.0f,      // c_puct
+			1.0f,        // c_puct
 			seed,
-			0.03f,     // dir_alpha
-			0.25f,     // dir_epsilon
-			pass_prob, // pass_prior
-			pass_bias  // pass_value_bias
+			0.03f,       // dir_alpha
+			dir_epsilon, // dir_epsilon (0 = no noise)
+			pass_prob,   // pass_prior
+			pass_bias    // pass_value_bias
 		);
 	}
 
@@ -1027,7 +1028,8 @@ public:
 		bool use_gpu = true,
 		int device_id = 0,
 		float pass_prior = 1e-10f,  // Default minimal prior for Pass
-		float pass_value_bias = 0.0f  // Pass value bias
+		float pass_value_bias = 0.0f,  // Pass value bias
+		float dirichlet_epsilon = 0.25f  // Dirichlet noise weight (0 = no noise)
 	)
 	{
 		if (seed < 0)
@@ -1068,7 +1070,7 @@ public:
 			{
 				throw std::runtime_error("AlphaZero policy requires model_path");
 			}
-			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id, pass_prior, pass_value_bias);
+			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id, pass_prior, pass_value_bias, dirichlet_epsilon);
 		}
 		else if (type == "cached-alphazero")
 		{

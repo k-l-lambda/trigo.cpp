@@ -67,6 +67,7 @@ struct SelfPlayConfig
 	int mcts_simulations{50};
 	float mcts_c_puct{1.0f};
 	float pass_value_bias{0.0f};  // Pass value bias for MCTS selection
+	float dirichlet_epsilon{0.25f};  // Dirichlet noise weight (0 = no noise)
 
 	// Generation settings
 	int num_games{100};
@@ -182,7 +183,8 @@ private:
 			true,   // use_gpu
 			0,      // device_id
 			1e-10f, // pass_prior
-			config.pass_value_bias
+			config.pass_value_bias,
+			config.dirichlet_epsilon
 		);
 		auto white = PolicyFactory::create(
 			config.white_policy,
@@ -193,7 +195,8 @@ private:
 			true,   // use_gpu
 			0,      // device_id
 			1e-10f, // pass_prior
-			config.pass_value_bias
+			config.pass_value_bias,
+			config.dirichlet_epsilon
 		);
 
 		// Generate games
@@ -252,7 +255,8 @@ private:
 				true,   // use_gpu
 				gpu_id, // device_id
 				1e-10f, // pass_prior
-				config.pass_value_bias
+				config.pass_value_bias,
+				config.dirichlet_epsilon
 			);
 			white = PolicyFactory::create(
 				config.white_policy,
@@ -263,7 +267,8 @@ private:
 				true,   // use_gpu
 				gpu_id, // device_id
 				1e-10f, // pass_prior
-				config.pass_value_bias
+				config.pass_value_bias,
+				config.dirichlet_epsilon
 			);
 		}
 		catch (const std::exception& e)
@@ -647,6 +652,10 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 		else if (arg == "--pass-value-bias" && i + 1 < argc)
 		{
 			config.pass_value_bias = std::stof(argv[++i]);
+		}
+		else if (arg == "--dirichlet-epsilon" && i + 1 < argc)
+		{
+			config.dirichlet_epsilon = std::stof(argv[++i]);
 		}
 		else if (arg == "--num-gpus" && i + 1 < argc)
 		{

@@ -199,24 +199,43 @@ int main(int argc, char* argv[])
 	try
 	{
 		// Create SharedModelInferencer (same as AlphaZeroPolicy)
-		auto inferencer = std::make_shared<SharedModelInferencer>(
-			base_model,
-			policy_head,
-			value_head,
-			true,  // use_gpu
-			0      // device_id
-		);
+		// Try GPU first, fallback to CPU
+		std::shared_ptr<SharedModelInferencer> inferencer;
+		try
+		{
+			inferencer = std::make_shared<SharedModelInferencer>(
+				base_model,
+				policy_head,
+				value_head,
+				true,  // use_gpu
+				0      // device_id
+			);
+		}
+		catch (const std::exception& e)
+		{
+			std::cout << "GPU failed, falling back to CPU..." << std::endl;
+			inferencer = std::make_shared<SharedModelInferencer>(
+				base_model,
+				policy_head,
+				value_head,
+				false,  // use_gpu = false (CPU)
+				0
+			);
+		}
 
 		// Create MCTS engine (same parameters as AlphaZeroPolicy)
 		float pass_prior = 1e-10f;  // Default minimal prior for Pass
+		float pass_value_bias = 0.0f;  // No bias for testing
+		float dirichlet_epsilon = 0.0f;  // No noise for deterministic testing
 		auto mcts = std::make_unique<MCTS>(
 			inferencer,
 			num_simulations,
 			1.0f,      // c_puct
 			seed,
 			0.03f,     // dirichlet_alpha
-			0.25f,     // dirichlet_epsilon
-			pass_prior
+			dirichlet_epsilon,
+			pass_prior,
+			pass_value_bias
 		);
 
 		std::cout << "MCTS initialized with " << num_simulations << " simulations" << std::endl;

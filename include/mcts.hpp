@@ -568,6 +568,19 @@ private:
 	 */
 	float evaluate(TrigoGame& game)
 	{
+		// IMPORTANT: If game is finished, return actual terminal value
+		if (!game.is_game_active())
+		{
+			// Game is over - use actual score from territory
+			auto territory = game.get_territory();
+			// Score = White territory - Black territory (white-positive)
+			float score = static_cast<float>(territory.white - territory.black);
+			// Normalize score to roughly [-1, 1] range
+			// Use tanh-like scaling: score / (|score| + 10)
+			float normalized = score / (std::abs(score) + 10.0f);
+			return normalized;  // White-positive: positive = White wins
+		}
+
 		// Convert game to TGN format
 		std::string tgn_text = game_to_tgn(game, false);
 
