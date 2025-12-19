@@ -79,7 +79,7 @@ int main(int argc, char* argv[])
 {
 	if (argc < 4)
 	{
-		std::cerr << "Usage: " << argv[0] << " <board_shape> <moves> <num_simulations> [model_dir]" << std::endl;
+		std::cerr << "Usage: " << argv[0] << " <board_shape> <moves> <num_simulations> [model_dir] [seed]" << std::endl;
 		std::cerr << "Example: " << argv[0] << " \"5x3x4\" \"a0z b0z aza azz\" 200" << std::endl;
 		std::cerr << std::endl;
 		std::cerr << "board_shape: Board dimensions (e.g., \"5x3x4\" or \"19x19\")" << std::endl;
@@ -88,6 +88,7 @@ int main(int argc, char* argv[])
 		std::cerr << "model_dir: Directory containing ONNX models (default: models/policy_value_model)" << std::endl;
 		std::cerr << "           Expected files: base_model_prefix.onnx, base_model_eval_cached.onnx," << std::endl;
 		std::cerr << "                            policy_head.onnx, value_head.onnx" << std::endl;
+		std::cerr << "seed: Random seed for MCTS (default: 42)" << std::endl;
 		return 1;
 	}
 
@@ -95,12 +96,14 @@ int main(int argc, char* argv[])
 	std::string moves_str = argv[2];
 	int num_simulations = std::atoi(argv[3]);
 	std::string model_path = (argc >= 5) ? argv[4] : "models/policy_value_model";
+	int seed = (argc >= 6) ? std::atoi(argv[5]) : 42;
 
 	std::cout << "=== MCTS from Prefix Test ===" << std::endl;
 	std::cout << "Board shape: " << shape_str << std::endl;
 	std::cout << "Moves: " << moves_str << std::endl;
 	std::cout << "Simulations: " << num_simulations << std::endl;
 	std::cout << "Model: " << model_path << std::endl;
+	std::cout << "Random seed: " << seed << std::endl;
 	std::cout << std::endl;
 
 	// Parse board shape
@@ -212,7 +215,7 @@ int main(int argc, char* argv[])
 			inferencer,
 			num_simulations,
 			1.414f,    // c_puct
-			42,        // seed
+			seed,      // Use seed from command line
 			0.03f,     // dirichlet_alpha
 			0.25f,     // dirichlet_epsilon
 			1e-10f     // pass_prior
