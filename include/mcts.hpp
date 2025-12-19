@@ -417,40 +417,48 @@ private:
 		if (!node->children.empty())
 		{
 			// Collect unexpanded children with their priors
+			// EXCLUDE Pass from early exploration - only add Pass when other options exhausted
 			std::vector<MCTSNode*> unexpanded;
 			std::vector<float> unexpanded_priors;
+			MCTSNode* pass_child = nullptr;
 
 			for (const auto& child : node->children)
 			{
 				if (child->visit_count == 0)
 				{
-					unexpanded.push_back(child.get());
-					unexpanded_priors.push_back(child->prior_prob);
+					if (child->is_pass)
+					{
+						pass_child = child.get();  // Remember Pass but don't add to sampling pool
+					}
+					else
+					{
+						unexpanded.push_back(child.get());
+						unexpanded_priors.push_back(child->prior_prob);
+					}
 				}
 			}
 
+			// If no regular unexpanded children, consider Pass
 			if (unexpanded.empty())
 			{
+				if (pass_child)
+				{
+					// Only Pass is unexpanded - visit it
+					game.pass();
+					return pass_child;
+				}
 				// All children have been visited at least once
 				node->is_fully_expanded = true;
 				return node;
 			}
 
-			// Sample from unexpanded children weighted by prior
-			// This prevents low-prior moves (like Pass) from being forced to explore
+			// Sample from unexpanded children weighted by prior (excluding Pass)
 			std::discrete_distribution<size_t> dist(unexpanded_priors.begin(), unexpanded_priors.end());
 			size_t idx = dist(rng);
 			MCTSNode* selected = unexpanded[idx];
 
-			// Apply move to game
-			if (selected->is_pass)
-			{
-				game.pass();
-			}
-			else
-			{
-				game.drop(selected->move);
-			}
+			// Apply move to game (selected is never Pass here - it was excluded above)
+			game.drop(selected->move);
 			return selected;
 		}
 
@@ -1003,10 +1011,12 @@ private:
 
 		bool is_white = (current_player == Stone::White);
 
-		// Minimum visit threshold for Pass Q-value to be trusted
-		// Pass with very low prior can get artificially high Q from single lucky visit
-		// Require minimum visits before Q-value dominates PUCT selection
-		constexpr int PASS_MIN_VISITS_FOR_Q = 5;
+		// Pass move handling:
+		// Pass tends to get artificially good Q-values because:
+		// 1. It stops exploration, so the subtree is shallow
+		// 2. Value network may not properly penalize passing early
+		// Solution: Completely ignore Pass Q-value, rely only on prior (which is tiny)
+		// This forces Pass to be selected only when other moves are truly exhausted
 
 		for (const auto& child : node->children)
 		{
@@ -1015,12 +1025,13 @@ private:
 
 			float score;
 
-			// Special handling for Pass node at root: don't trust Q until enough visits
-			if (child->is_pass && node == root.get() && child->visit_count < PASS_MIN_VISITS_FOR_Q)
+			// Special handling for Pass node: use very negative score
+			// Pass should only be selected when ALL other moves are even worse
+			// Use -infinity + u so Pass is always last choice unless no alternatives
+			if (child->is_pass)
 			{
-				// Use exploration-only PUCT score (Q treated as 0)
-				// This prevents single lucky visit from dominating selection
-				score = u;
+				// Massive penalty to ensure Pass is never preferred over regular moves
+				score = -1000.0f + u;
 			}
 			else
 			{
