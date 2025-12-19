@@ -681,3 +681,20 @@ set_target_properties(test_incremental_gpu PROPERTIES
 	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
 )
+
+
+# Test MCTS from prefix sequence
+add_executable(test_mcts_from_prefix tests/test_mcts_from_prefix.cpp src/prefix_tree_builder.cpp)
+target_link_libraries(test_mcts_from_prefix PRIVATE
+	trigo_game
+	trigo_inference
+	${ONNXRUNTIME_LIB}
+)
+if(USE_CUDA)
+	target_link_libraries(test_mcts_from_prefix PRIVATE CUDA::cudart)
+endif()
+set_target_properties(test_mcts_from_prefix PROPERTIES
+	BUILD_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+	INSTALL_RPATH "${ONNXRUNTIME_ROOT_DIR}/lib"
+)
+
