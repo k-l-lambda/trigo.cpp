@@ -61,6 +61,8 @@ onnxruntime-*.tar.gz
 onnxruntime-linux-x64-*
 *.tgz.1
 *.tgz.aria2
+*.zip
+*.gz
 
 # Generated files
 *.log

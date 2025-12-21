@@ -67,6 +67,7 @@ struct SelfPlayConfig
 	int mcts_simulations{50};
 	float mcts_c_puct{1.0f};
 	float pass_value_bias{0.0f};  // Pass value bias for MCTS selection
+	float territory_value_factor{0.0f};  // Territory change bias factor
 	float dirichlet_epsilon{0.25f};  // Dirichlet noise weight (0 = no noise)
 
 	// Generation settings
@@ -184,7 +185,8 @@ private:
 			0,      // device_id
 			1e-10f, // pass_prior
 			config.pass_value_bias,
-			config.dirichlet_epsilon
+			config.dirichlet_epsilon,
+			config.territory_value_factor
 		);
 		auto white = PolicyFactory::create(
 			config.white_policy,
@@ -196,7 +198,8 @@ private:
 			0,      // device_id
 			1e-10f, // pass_prior
 			config.pass_value_bias,
-			config.dirichlet_epsilon
+			config.dirichlet_epsilon,
+			config.territory_value_factor
 		);
 
 		// Generate games
@@ -256,7 +259,8 @@ private:
 				gpu_id, // device_id
 				1e-10f, // pass_prior
 				config.pass_value_bias,
-				config.dirichlet_epsilon
+				config.dirichlet_epsilon,
+				config.territory_value_factor
 			);
 			white = PolicyFactory::create(
 				config.white_policy,
@@ -268,7 +272,8 @@ private:
 				gpu_id, // device_id
 				1e-10f, // pass_prior
 				config.pass_value_bias,
-				config.dirichlet_epsilon
+				config.dirichlet_epsilon,
+				config.territory_value_factor
 			);
 		}
 		catch (const std::exception& e)
@@ -662,6 +667,10 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 		{
 			config.pass_value_bias = std::stof(argv[++i]);
 		}
+		else if (arg == "--territory-value-factor" && i + 1 < argc)
+		{
+			config.territory_value_factor = std::stof(argv[++i]);
+		}
 		else if (arg == "--dirichlet-epsilon" && i + 1 < argc)
 		{
 			config.dirichlet_epsilon = std::stof(argv[++i]);
@@ -695,6 +704,9 @@ SelfPlayConfig parse_args(int argc, char* argv[])
 			std::cout << "                           -10: Moderate penalty (default for alphazero)\n";
 			std::cout << "                            -1: Light penalty (allows late-game Pass)\n";
 			std::cout << "                             0: No penalty (may cause early Pass bug)\n";
+			std::cout << "  --territory-value-factor F  Territory change bias (default: 0; positive rewards territory gain)\n";
+			std::cout << "                         Bias = (current_territory - prev_territory) / board_size * factor\n";
+			std::cout << "                         Applied to value network output\n";
 			std::cout << "  --num-gpus N           Number of GPUs for parallel generation (default: 0 = single)\n";
 			std::cout << "  --help                 Show this help message\n";
 			std::exit(0);

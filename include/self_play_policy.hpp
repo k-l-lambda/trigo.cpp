@@ -357,7 +357,8 @@ public:
 		int device_id = 0,
 		float pass_prob = 1e-10f,  // Default minimal prior for Pass
 		float pass_bias = 0.0f,   // Pass value bias
-		float dir_epsilon = 0.25f // Dirichlet noise weight (0 = no noise)
+		float dir_epsilon = 0.25f, // Dirichlet noise weight (0 = no noise)
+		float territory_factor = 0.0f  // Territory change bias factor
 	)
 		: num_simulations(num_sims)
 	{
@@ -403,7 +404,8 @@ public:
 			0.03f,       // dir_alpha
 			dir_epsilon, // dir_epsilon (0 = no noise)
 			pass_prob,   // pass_prior
-			pass_bias    // pass_value_bias
+			pass_bias,   // pass_value_bias
+			territory_factor  // territory_value_factor
 		);
 	}
 
@@ -1029,7 +1031,8 @@ public:
 		int device_id = 0,
 		float pass_prior = 1e-10f,  // Default minimal prior for Pass
 		float pass_value_bias = 0.0f,  // Pass value bias
-		float dirichlet_epsilon = 0.25f  // Dirichlet noise weight (0 = no noise)
+		float dirichlet_epsilon = 0.25f,  // Dirichlet noise weight (0 = no noise)
+		float territory_value_factor = 0.0f  // Territory change bias factor
 	)
 	{
 		if (seed < 0)
@@ -1070,7 +1073,7 @@ public:
 			{
 				throw std::runtime_error("AlphaZero policy requires model_path");
 			}
-			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id, pass_prior, pass_value_bias, dirichlet_epsilon);
+			return std::make_unique<AlphaZeroPolicy>(model_path, mcts_simulations, seed, use_gpu, device_id, pass_prior, pass_value_bias, dirichlet_epsilon, territory_value_factor);
 		}
 		else if (type == "cached-alphazero")
 		{

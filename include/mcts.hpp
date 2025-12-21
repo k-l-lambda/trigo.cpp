@@ -192,6 +192,10 @@ private:
 	// Use negative value (e.g., -10) to penalize Pass for both players
 	float pass_value_bias;
 
+	// Territory value factor: weight for territory change bias
+	// Bias = (delta_territory / board_size) * territory_value_factor * player_sign
+	float territory_value_factor;
+
 
 public:
 	MCTS(
@@ -202,7 +206,8 @@ public:
 		float dir_alpha = 0.03f,
 		float dir_epsilon = 0.25f,
 		float pass_prob = 1e-10f,  // Default minimal prior for Pass
-		float pass_bias = 0.0f    // Pass value bias (0 = no bias)
+		float pass_bias = 0.0f,    // Pass value bias (0 = no bias)
+		float territory_factor = 0.0f  // Territory value factor (0 = no bias)
 	)
 		: num_simulations(num_sims)
 		, c_puct(exploration)
@@ -212,6 +217,7 @@ public:
 		, rng(seed)
 		, pass_prior(pass_prob)
 		, pass_value_bias(pass_bias)
+		, territory_value_factor(territory_factor)
 	{
 	}
 
@@ -280,6 +286,10 @@ public:
 			).count();
 #endif
 
+			// Store parent game state before expansion (for territory bias)
+			TrigoGame parent_game_copy = game_copy;
+			Stone evaluating_player = game_copy.get_current_player();
+
 			// 2. Expansion: Add new child node with policy prior
 			if (game_copy.is_game_active() && node->visit_count > 0)
 			{
@@ -301,7 +311,9 @@ public:
 #endif
 
 			// 3. Evaluation: Use value network (replaces rollout)
-			float value = evaluate(game_copy);
+			// Pass parent game state for territory bias calculation
+			// Pass is_pass flag to correctly handle stone discount (Pass doesn't place stones)
+			float value = evaluate(game_copy, node->parent ? &parent_game_copy : nullptr, evaluating_player, node->is_pass);
 
 			// Mark node as terminal if game is finished
 			if (!game_copy.is_game_active() && !node->is_terminal())
@@ -625,10 +637,14 @@ private:
 	 *
 	 * Replaces expensive random rollouts with fast neural network inference
 	 *
+	 * @param game Current game state to evaluate
+	 * @param parent_game Parent game state (for territory bias calculation)
+	 * @param evaluating_player Player whose perspective to evaluate from
+	 * @param is_pass_move Whether the move leading to this position was a pass
 	 * @return White-positive value (positive = White winning, negative = Black winning)
 	 *         Consistent with CachedMCTS value system
 	 */
-	float evaluate(TrigoGame& game)
+	float evaluate(TrigoGame& game, const TrigoGame* parent_game = nullptr, Stone evaluating_player = Stone::Empty, bool is_pass_move = false)
 	{
 		// IMPORTANT: If game is finished, return actual terminal value
 		if (!game.is_game_active())
@@ -683,6 +699,38 @@ private:
 		{
 			auto values = inferencer->value_inference(tokens, 1, seq_len, 3);
 			float value = values[0];
+
+			// Apply territory value bias if enabled and parent game provided
+			if (territory_value_factor != 0.0f && parent_game != nullptr && evaluating_player != Stone::Empty)
+			{
+				// Calculate territory scores (white - black, white-positive)
+				auto current_territory = game.get_territory();
+				// Note: get_territory() is not const, need const_cast
+				auto parent_territory = const_cast<TrigoGame*>(parent_game)->get_territory();
+
+				float current_score = static_cast<float>(current_territory.white - current_territory.black);
+				float parent_score = static_cast<float>(parent_territory.white - parent_territory.black);
+				float territory_delta = current_score - parent_score;
+
+				// Discount the newly placed stone itself (we only care about net effect: captures, etc.)
+				// Pass moves don't place stones, so discount = 0
+				// When Black plays: delta naturally = -1, so add 1 to get net effect
+				// When White plays: delta naturally = +1, so subtract 1 to get net effect
+				float stone_discount = is_pass_move ? 0.0f :
+					((evaluating_player == Stone::White) ? 1.0f : -1.0f);
+				float adjusted_delta = territory_delta - stone_discount;
+
+				// Normalize by board size
+				const auto& shape = game.get_shape();
+				int board_size = shape.x * shape.y * shape.z;
+				float normalized_delta = adjusted_delta / static_cast<float>(board_size);
+
+				// Apply player perspective: Black wants to minimize (white-black), so flip sign
+				float player_sign = (evaluating_player == Stone::White) ? 1.0f : -1.0f;
+				float territory_bias = normalized_delta * territory_value_factor * player_sign;
+
+				value += territory_bias;
+			}
 
 			// IMPORTANT: Value model outputs White advantage (positive = White winning)
 			// We return this directly without conversion (white-positive system)
