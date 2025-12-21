@@ -688,7 +688,7 @@ bool TrigoGame::jump_to_step(int index)
 
 // === Territory and Statistics ===
 
-TerritoryResult TrigoGame::get_territory()
+TerritoryResult TrigoGame::get_territory() const
 {
 	if (territoryDirty || !cachedTerritory)
 	{

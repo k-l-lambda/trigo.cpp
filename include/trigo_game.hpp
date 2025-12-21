@@ -302,7 +302,7 @@ public:
 	 *
 	 * Returns cached result if territory hasn't changed
 	 */
-	TerritoryResult get_territory();
+	TerritoryResult get_territory() const;
 
 	/**
 	 * Get captured stone counts up to current position in history
@@ -386,9 +386,9 @@ private:
 	// Last captured stones for Ko rule detection
 	std::vector<Position> lastCapturedPositions;
 
-	// Territory cache
-	bool territoryDirty;
-	std::optional<TerritoryResult> cachedTerritory;
+	// Territory cache (mutable for lazy evaluation in const methods)
+	mutable bool territoryDirty;
+	mutable std::optional<TerritoryResult> cachedTerritory;
 };
 
 

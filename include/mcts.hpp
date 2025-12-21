@@ -80,9 +80,12 @@ public:
 	int depth;               // Distance from root (0 for root)
 	Stone player_to_move;    // Player to move at this node (BLACK/WHITE)
 
+	// Territory value factor optimization
+	Stone actor;             // Player who moved to reach this node (Empty for root)
+
 
 	MCTSNode(const Position& m, bool pass, MCTSNode* p = nullptr, float prior = 1.0f,
-	         int d = 0, Stone player = Stone::Empty)
+	         int d = 0, Stone player = Stone::Empty, Stone act = Stone::Empty)
 		: move(m)
 		, is_pass(pass)
 		, parent(p)
@@ -93,6 +96,7 @@ public:
 		, terminal_value(std::numeric_limits<float>::quiet_NaN())
 		, depth(d)
 		, player_to_move(player)
+		, actor(act)
 	{
 		// Ensure player_to_move is explicitly set (not Empty)
 		// This is critical for correct minimax propagation
@@ -286,14 +290,16 @@ public:
 			).count();
 #endif
 
-			// Store parent game state before expansion (for territory bias)
+			// Store parent game state BEFORE expansion (for territory bias)
+			// This is the true parent state (before the move is applied in expand)
 			TrigoGame parent_game_copy = game_copy;
-			Stone evaluating_player = game_copy.get_current_player();
+			bool expansion_occurred = false;
 
 			// 2. Expansion: Add new child node with policy prior
 			if (game_copy.is_game_active() && node->visit_count > 0)
 			{
 				node = expand(node, game_copy);
+				expansion_occurred = true;
 
 				// Apply Dirichlet noise to root immediately after first expansion
 				// AlphaZero style: add noise as soon as root children exist
@@ -311,9 +317,10 @@ public:
 #endif
 
 			// 3. Evaluation: Use value network (replaces rollout)
-			// Pass parent game state for territory bias calculation
-			// Pass is_pass flag to correctly handle stone discount (Pass doesn't place stones)
-			float value = evaluate(game_copy, node->parent ? &parent_game_copy : nullptr, evaluating_player, node->is_pass);
+			// Pass parent game state ONLY if expansion occurred (ensuring parent/child relationship is correct)
+			// If no expansion, parent_game_copy == game_copy, so delta would be ~0 anyway
+			const TrigoGame* parent_for_bias = (expansion_occurred && node->parent) ? &parent_game_copy : nullptr;
+			float value = evaluate(game_copy, parent_for_bias, node->actor, node->is_pass);
 
 			// Mark node as terminal if game is finished
 			if (!game_copy.is_game_active() && !node->is_terminal())
@@ -593,11 +600,12 @@ private:
 		Stone next_player = (node->player_to_move == Stone::Black)
 		                    ? Stone::White
 		                    : Stone::Black;
+		Stone actor = node->player_to_move;  // Player making the move
 
 		for (size_t i = 0; i < valid_moves.size(); i++)
 		{
 			auto new_node = std::make_unique<MCTSNode>(
-				valid_moves[i], false, node, priors[i], child_depth, next_player
+				valid_moves[i], false, node, priors[i], child_depth, next_player, actor
 			);
 			node->children.push_back(std::move(new_node));
 		}
@@ -607,7 +615,7 @@ private:
 		{
 			float pass_prior = priors.back();
 			auto pass_node = std::make_unique<MCTSNode>(
-				Position{0, 0, 0}, true, node, pass_prior, child_depth, next_player
+				Position{0, 0, 0}, true, node, pass_prior, child_depth, next_player, actor
 			);
 			node->children.push_back(std::move(pass_node));
 		}
@@ -639,12 +647,12 @@ private:
 	 *
 	 * @param game Current game state to evaluate
 	 * @param parent_game Parent game state (for territory bias calculation)
-	 * @param evaluating_player Player whose perspective to evaluate from
+	 * @param actor Player who moved to reach this position (Empty if root)
 	 * @param is_pass_move Whether the move leading to this position was a pass
 	 * @return White-positive value (positive = White winning, negative = Black winning)
 	 *         Consistent with CachedMCTS value system
 	 */
-	float evaluate(TrigoGame& game, const TrigoGame* parent_game = nullptr, Stone evaluating_player = Stone::Empty, bool is_pass_move = false)
+	float evaluate(TrigoGame& game, const TrigoGame* parent_game = nullptr, Stone actor = Stone::Empty, bool is_pass_move = false)
 	{
 		// IMPORTANT: If game is finished, return actual terminal value
 		if (!game.is_game_active())
@@ -701,33 +709,37 @@ private:
 			float value = values[0];
 
 			// Apply territory value bias if enabled and parent game provided
-			if (territory_value_factor != 0.0f && parent_game != nullptr && evaluating_player != Stone::Empty)
+			if (territory_value_factor != 0.0f && parent_game != nullptr && actor != Stone::Empty)
 			{
 				// Calculate territory scores (white - black, white-positive)
 				auto current_territory = game.get_territory();
-				// Note: get_territory() is not const, need const_cast
-				auto parent_territory = const_cast<TrigoGame*>(parent_game)->get_territory();
+				auto parent_territory = parent_game->get_territory();
 
 				float current_score = static_cast<float>(current_territory.white - current_territory.black);
 				float parent_score = static_cast<float>(parent_territory.white - parent_territory.black);
 				float territory_delta = current_score - parent_score;
 
-				// Discount the newly placed stone itself (we only care about net effect: captures, etc.)
-				// Pass moves don't place stones, so discount = 0
-				// When Black plays: delta naturally = -1, so add 1 to get net effect
-				// When White plays: delta naturally = +1, so subtract 1 to get net effect
-				float stone_discount = is_pass_move ? 0.0f :
-					((evaluating_player == Stone::White) ? 1.0f : -1.0f);
-				float adjusted_delta = territory_delta - stone_discount;
+				// Use raw territory delta (without stone discount)
+				// The delta already captures the net effect of the move including:
+				// - Stone placement
+				// - Captures
+				// - Territory influence changes
+				//
+				// IMPORTANT: territory_delta is white-positive:
+				//   - Positive delta = good for White (White gained territory)
+				//   - Negative delta = good for Black (Black gained territory)
+				// This already reflects who benefited, regardless of who moved.
+				// DO NOT multiply by actor sign - that would invert incentives!
+				float adjusted_delta = territory_delta;
 
 				// Normalize by board size
 				const auto& shape = game.get_shape();
 				int board_size = shape.x * shape.y * shape.z;
 				float normalized_delta = adjusted_delta / static_cast<float>(board_size);
 
-				// Apply player perspective: Black wants to minimize (white-black), so flip sign
-				float player_sign = (evaluating_player == Stone::White) ? 1.0f : -1.0f;
-				float territory_bias = normalized_delta * territory_value_factor * player_sign;
+				// Apply territory bias directly to white-positive value
+				// Since both value and normalized_delta are white-positive, just add them
+				float territory_bias = normalized_delta * territory_value_factor;
 
 				value += territory_bias;
 			}
